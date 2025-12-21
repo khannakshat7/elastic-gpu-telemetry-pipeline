@@ -86,18 +86,24 @@ func TestHandlers_ListGPUs_Success(t *testing.T) {
 	// Setup mock expectations
 	expectedGPUs := []*domain.GPU{
 		{
-			UUID:     "GPU-123",
-			GPUID:    "0",
-			Device:   "nvidia0",
-			Model:    "NVIDIA H100 80GB HBM3",
-			Hostname: "host-1",
+			UUID:      "GPU-123",
+			GPUID:     "0",
+			Device:    "nvidia0",
+			Model:     "NVIDIA H100 80GB HBM3",
+			Hostname:  "host-1",
+			Container: "gpu-workload",
+			Pod:       "pod-1",
+			Namespace: "team1",
 		},
 		{
-			UUID:     "GPU-456",
-			GPUID:    "1",
-			Device:   "nvidia1",
-			Model:    "NVIDIA A100 40GB",
-			Hostname: "host-2",
+			UUID:      "GPU-456",
+			GPUID:     "1",
+			Device:    "nvidia1",
+			Model:     "NVIDIA A100 40GB",
+			Hostname:  "host-2",
+			Container: "",
+			Pod:       "",
+			Namespace: "",
 		},
 	}
 	mockRepo.On("ListGPUs", mock.Anything).Return(expectedGPUs, nil)
@@ -116,7 +122,16 @@ func TestHandlers_ListGPUs_Success(t *testing.T) {
 	assert.Equal(t, 2, response.Count)
 	assert.Len(t, response.GPUs, 2)
 	assert.Equal(t, "GPU-123", response.GPUs[0].UUID)
+	assert.Equal(t, "nvidia0", response.GPUs[0].DeviceID)
+	assert.Equal(t, "0", response.GPUs[0].GPUIndex)
+	assert.Equal(t, "NVIDIA H100 80GB HBM3", response.GPUs[0].ModelName)
+	assert.Equal(t, "gpu-workload", response.GPUs[0].Container)
+	assert.Equal(t, "pod-1", response.GPUs[0].Pod)
+	assert.Equal(t, "team1", response.GPUs[0].Namespace)
 	assert.Equal(t, "GPU-456", response.GPUs[1].UUID)
+	assert.Equal(t, "nvidia1", response.GPUs[1].DeviceID)
+	assert.Equal(t, "1", response.GPUs[1].GPUIndex)
+	assert.Equal(t, "NVIDIA A100 40GB", response.GPUs[1].ModelName)
 
 	mockRepo.AssertExpectations(t)
 }
@@ -128,6 +143,7 @@ func TestHandlers_ListGPUs_Empty(t *testing.T) {
 
 	// Setup mock expectations - empty list
 	mockRepo.On("ListGPUs", mock.Anything).Return([]*domain.GPU{}, nil)
+	// No GetTelemetryByGPU calls needed for empty list
 
 	// Create request
 	req := httptest.NewRequest("GET", "/api/v1/gpus", nil)

@@ -45,11 +45,14 @@ func (h *Handlers) ListGPUs(c *gin.Context) {
 	gpuResponses := make([]GPUResponse, len(gpus))
 	for i, gpu := range gpus {
 		gpuResponses[i] = GPUResponse{
-			UUID:     gpu.UUID,
-			GPUID:    gpu.GPUID,
-			Device:   gpu.Device,
-			Model:    gpu.Model,
-			Hostname: gpu.Hostname,
+			UUID:      gpu.UUID,
+			DeviceID:  gpu.Device,
+			GPUIndex:  gpu.GPUID,
+			ModelName: gpu.Model,
+			Hostname:  gpu.Hostname,
+			Container: gpu.Container,
+			Pod:       gpu.Pod,
+			Namespace: gpu.Namespace,
 		}
 	}
 

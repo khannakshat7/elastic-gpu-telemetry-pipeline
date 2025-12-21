@@ -139,6 +139,8 @@ func (p *CSVParser) parseRow(row []string, rowNum int) (*domain.TelemetryRecord,
 		Namespace: trim(row[colNamespace]),
 		Hostname:  trim(row[colHostname]),
 		ModelName: trim(row[colModelName]),
+		GPUID:     trim(row[colGPUID]),
+		Device:    trim(row[colDevice]),
 	}
 
 	return record, gpu, nil

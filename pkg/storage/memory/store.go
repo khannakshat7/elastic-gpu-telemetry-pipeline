@@ -81,11 +81,14 @@ func (s *Store) GetGPU(ctx context.Context, uuid string) (*domain.GPU, error) {
 
 	// Return a copy to prevent external modifications
 	return &domain.GPU{
-		UUID:     gpu.UUID,
-		GPUID:    gpu.GPUID,
-		Device:   gpu.Device,
-		Model:    gpu.Model,
-		Hostname: gpu.Hostname,
+		UUID:      gpu.UUID,
+		GPUID:     gpu.GPUID,
+		Device:    gpu.Device,
+		Model:     gpu.Model,
+		Hostname:  gpu.Hostname,
+		Container: gpu.Container,
+		Pod:       gpu.Pod,
+		Namespace: gpu.Namespace,
 	}, nil
 }
 
@@ -101,11 +104,14 @@ func (s *Store) ListGPUs(ctx context.Context) ([]*domain.GPU, error) {
 		if gpu, exists := s.gpus[uuid]; exists {
 			// Return a copy to prevent external modifications
 			gpus = append(gpus, &domain.GPU{
-				UUID:     gpu.UUID,
-				GPUID:    gpu.GPUID,
-				Device:   gpu.Device,
-				Model:    gpu.Model,
-				Hostname: gpu.Hostname,
+				UUID:      gpu.UUID,
+				GPUID:     gpu.GPUID,
+				Device:    gpu.Device,
+				Model:     gpu.Model,
+				Hostname:  gpu.Hostname,
+				Container: gpu.Container,
+				Pod:       gpu.Pod,
+				Namespace: gpu.Namespace,
 			})
 		}
 	}

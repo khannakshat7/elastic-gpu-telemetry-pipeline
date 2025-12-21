@@ -17,17 +17,26 @@ definitions:
     type: object
   pkg_api.GPUResponse:
     properties:
-      device:
+      container:
+        example: gpu-workload
+        type: string
+      device_id:
         example: nvidia0
         type: string
-      gpu_id:
+      gpu_index:
         example: "0"
         type: string
       hostname:
         example: mtv5-dgx1-hgpu-031
         type: string
-      model:
+      model_name:
         example: NVIDIA H100 80GB HBM3
+        type: string
+      namespace:
+        example: team1
+        type: string
+      pod:
+        example: pod-1
         type: string
       uuid:
         example: GPU-5fd4f087-86f3-7a43-b711-4771313afc50

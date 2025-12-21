@@ -137,11 +137,15 @@
         "pkg_api.GPUResponse": {
             "type": "object",
             "properties": {
-                "device": {
+                "container": {
+                    "type": "string",
+                    "example": "gpu-workload"
+                },
+                "device_id": {
                     "type": "string",
                     "example": "nvidia0"
                 },
-                "gpu_id": {
+                "gpu_index": {
                     "type": "string",
                     "example": "0"
                 },
@@ -149,9 +153,17 @@
                     "type": "string",
                     "example": "mtv5-dgx1-hgpu-031"
                 },
-                "model": {
+                "model_name": {
                     "type": "string",
                     "example": "NVIDIA H100 80GB HBM3"
+                },
+                "namespace": {
+                    "type": "string",
+                    "example": "team1"
+                },
+                "pod": {
+                    "type": "string",
+                    "example": "pod-1"
                 },
                 "uuid": {
                     "type": "string",

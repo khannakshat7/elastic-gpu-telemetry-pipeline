@@ -15,6 +15,8 @@ import "time"
 //   - Namespace: maps to CSV column "namespace" (often empty)
 //   - Hostname: maps to CSV column "Hostname" (denormalized for query efficiency)
 //   - ModelName: maps to CSV column "modelName" (denormalized for query efficiency)
+//   - GPUID: maps to CSV column "gpu_id" (denormalized for GPU entity creation)
+//   - Device: maps to CSV column "device" (denormalized for GPU entity creation)
 //
 // Note: CSV column "timestamp" is IGNORED - we use ingestion time instead.
 type TelemetryRecord struct {
@@ -56,4 +58,14 @@ type TelemetryRecord struct {
 	// ModelName is the GPU model name (denormalized for efficiency).
 	// Maps to CSV column "modelName". Stored here to avoid joins in queries.
 	ModelName string `json:"model_name,omitempty"`
+
+	// GPUID is the GPU index on the host (denormalized for efficiency).
+	// Maps to CSV column "gpu_id". Stored here to populate GPU entity in collector.
+	// Example: "0", "1", "2"
+	GPUID string `json:"gpu_id,omitempty"`
+
+	// Device is the device name (denormalized for efficiency).
+	// Maps to CSV column "device". Stored here to populate GPU entity in collector.
+	// Example: "nvidia0", "nvidia1"
+	Device string `json:"device,omitempty"`
 }

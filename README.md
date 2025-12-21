@@ -282,7 +282,6 @@ helm install elastic-gpu-telemetry ./charts/elastic-gpu-telemetry \
   --set collector.replicaCount=3
 ```
 
-See [KUBERNETES.md](./KUBERNETES.md) for detailed deployment instructions.
 
 ### Scaling Services
 
@@ -480,8 +479,6 @@ make cover-func
 
 Current test coverage: **89.7%** (excluding `cmd/` packages)
 
-See [docs/TESTING.md](./docs/TESTING.md) for detailed testing documentation.
-
 ## Configuration
 
 ### Environment Variables
@@ -525,7 +522,6 @@ helm install elastic-gpu-telemetry ./charts/elastic-gpu-telemetry \
   --set streamer.env.STREAM_INTERVAL_MS=50
 ```
 
-See [charts/elastic-gpu-telemetry/README.md](./charts/elastic-gpu-telemetry/README.md) for all configuration options.
 
 ## Troubleshooting
 
@@ -602,18 +598,3 @@ lsof -i :8081
 # Start fresh port forward
 make port-forward-bg-local
 ```
-
-For more troubleshooting, see [KUBERNETES.md](./KUBERNETES.md) and [docs/RUNNING_SERVICES.md](./docs/RUNNING_SERVICES.md).
-
-
-## Additional Documentation
-
-- [Design Document](./docs/design.md) - Detailed architecture and design decisions
-- [API Documentation](./docs/API_README.md) - API endpoint details
-- [Kubernetes Deployment](./KUBERNETES.md) - Production deployment guide
-- [Quick Start](./QUICKSTART.md) - Quick reference guide
-- [Testing Guide](./docs/TESTING.md) - Testing strategy and coverage
-- [Running Services](./docs/RUNNING_SERVICES.md) - Local development guide
-- [Docker Guide](./DOCKER.md) - Docker build and image details
-- [Helm Chart](./charts/elastic-gpu-telemetry/README.md) - Helm chart documentation
-

@@ -26,4 +26,16 @@ type GPU struct {
 
 	// Hostname is the host machine identifier where the GPU is located
 	Hostname string `json:"hostname"`
+
+	// Container is the container identifier (if applicable).
+	// Maps to CSV column "container". Often empty in sample data.
+	Container string `json:"container,omitempty"`
+
+	// Pod is the Kubernetes pod identifier (if applicable).
+	// Maps to CSV column "pod". Often empty in sample data.
+	Pod string `json:"pod,omitempty"`
+
+	// Namespace is the Kubernetes namespace (if applicable).
+	// Maps to CSV column "namespace". Often empty in sample data.
+	Namespace string `json:"namespace,omitempty"`
 }

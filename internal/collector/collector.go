@@ -211,10 +211,13 @@ func (c *Collector) processMessage(ctx context.Context, msg *domain.Message, gpu
 	if record.GPUUUID != "" {
 		gpu := &domain.GPU{
 			UUID:     record.GPUUUID,
-			GPUID:    "", // Not available in telemetry record
-			Device:   "", // Not available in telemetry record
+			GPUID:    record.GPUID,
+			Device:   record.Device,
 			Model:    record.ModelName,
 			Hostname: record.Hostname,
+			Container: record.Container,
+			Pod: record.Pod,
+			Namespace: record.Namespace,
 		}
 		// Only add if we don't already have this GPU (or update if we have more info)
 		if existing, exists := gpuMap[gpu.UUID]; !exists || (gpu.Model != "" && existing.Model == "") {
