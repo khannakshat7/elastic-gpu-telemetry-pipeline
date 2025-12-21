@@ -1,0 +1,116 @@
+{{- if .Values.apiGateway.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.apiGateway.name }}
+  labels:
+    {{- include "elastic-gpu-telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-gateway
+spec:
+  replicas: {{ .Values.apiGateway.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "elastic-gpu-telemetry.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api-gateway
+  template:
+    metadata:
+      labels:
+        {{- include "elastic-gpu-telemetry.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: api-gateway
+    spec:
+      containers:
+      - name: api-gateway
+        image: {{ include "elastic-gpu-telemetry.image" (dict "Values" .Values "image" .Values.apiGateway.image "global" .Values.global) }}
+        imagePullPolicy: {{ .Values.apiGateway.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.apiGateway.service.port }}
+          protocol: TCP
+        env:
+        {{- range $key, $value := .Values.apiGateway.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.apiGateway.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 3
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.apiGateway.name }}
+  labels:
+    {{- include "elastic-gpu-telemetry.serviceLabels" (dict "component" "api-gateway" "Values" .Values "Release" .Release "Chart" .Chart) | nindent 4 }}
+spec:
+  type: {{ .Values.apiGateway.service.type }}
+  ports:
+    - port: {{ .Values.apiGateway.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+      {{- if and (eq .Values.apiGateway.service.type "NodePort") .Values.apiGateway.service.nodePort }}
+      nodePort: {{ .Values.apiGateway.service.nodePort }}
+      {{- end }}
+  selector:
+    {{- include "elastic-gpu-telemetry.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: api-gateway
+{{- if .Values.apiGateway.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.apiGateway.name }}
+  labels:
+    {{- include "elastic-gpu-telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-gateway
+  {{- with .Values.apiGateway.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.apiGateway.ingress.className }}
+  ingressClassName: {{ .Values.apiGateway.ingress.className }}
+  {{- end }}
+  {{- if .Values.apiGateway.ingress.tls }}
+  tls:
+    {{- range .Values.apiGateway.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.apiGateway.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ $.Values.apiGateway.name }}
+                port:
+                  number: {{ $.Values.apiGateway.service.port }}
+          {{- end }}
+    {{- end }}
+{{- end }}
+{{- end }}
+

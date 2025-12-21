@@ -1,0 +1,51 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.html
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build artifacts
+bin/
+
+# CSV files in chart (will be copied from root csv/ directory)
+charts/elastic-gpu-telemetry/csv/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Kubernetes configs (if generated)
+kubeconfig
+
+# Coverage files
+coverage.out
+coverage.html

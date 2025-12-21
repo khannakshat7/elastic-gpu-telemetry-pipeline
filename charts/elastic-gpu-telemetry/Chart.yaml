@@ -1,0 +1,15 @@
+apiVersion: v2
+name: elastic-gpu-telemetry
+description: A Helm chart for Elastic GPU Telemetry Pipeline
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - gpu
+  - telemetry
+  - monitoring
+  - metrics
+maintainers:
+  - name: GPU Telemetry Team
+home: https://github.com/khannakshat7/elastic-gpu-telemetry-pipeline
+

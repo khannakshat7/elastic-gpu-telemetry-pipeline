@@ -1,0 +1,39 @@
+{{- if .Values.collector.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.collector.name }}
+  labels:
+    {{- include "elastic-gpu-telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: collector
+spec:
+  replicas: {{ .Values.collector.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "elastic-gpu-telemetry.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: collector
+  template:
+    metadata:
+      labels:
+        {{- include "elastic-gpu-telemetry.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: collector
+    spec:
+      containers:
+      - name: collector
+        image: {{ include "elastic-gpu-telemetry.image" (dict "Values" .Values "image" .Values.collector.image "global" .Values.global) }}
+        imagePullPolicy: {{ .Values.collector.image.pullPolicy }}
+        env:
+        {{- range $key, $value := .Values.collector.env }}
+        - name: {{ $key }}
+          {{- if eq $key "COLLECTOR_INSTANCE_ID" }}
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+          {{- else }}
+          value: {{ $value | quote }}
+          {{- end }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.collector.resources | nindent 10 }}
+{{- end }}
+

@@ -1,0 +1,167 @@
+basePath: /api/v1
+definitions:
+  pkg_api.ErrorResponse:
+    properties:
+      code:
+        example: GPU_NOT_FOUND
+        type: string
+      error:
+        example: GPU not found
+        type: string
+      message:
+        example: The requested GPU UUID does not exist
+        type: string
+      timestamp:
+        example: "2025-01-01T00:00:00Z"
+        type: string
+    type: object
+  pkg_api.GPUResponse:
+    properties:
+      device:
+        example: nvidia0
+        type: string
+      gpu_id:
+        example: "0"
+        type: string
+      hostname:
+        example: mtv5-dgx1-hgpu-031
+        type: string
+      model:
+        example: NVIDIA H100 80GB HBM3
+        type: string
+      uuid:
+        example: GPU-5fd4f087-86f3-7a43-b711-4771313afc50
+        type: string
+    type: object
+  pkg_api.GetTelemetryResponse:
+    properties:
+      count:
+        type: integer
+      end_time:
+        type: string
+      gpu_uuid:
+        example: GPU-5fd4f087-86f3-7a43-b711-4771313afc50
+        type: string
+      records:
+        items:
+          $ref: '#/definitions/pkg_api.TelemetryResponse'
+        type: array
+      start_time:
+        type: string
+    type: object
+  pkg_api.ListGPUsResponse:
+    properties:
+      count:
+        type: integer
+      gpus:
+        items:
+          $ref: '#/definitions/pkg_api.GPUResponse'
+        type: array
+    type: object
+  pkg_api.TelemetryResponse:
+    properties:
+      container:
+        type: string
+      gpu_uuid:
+        example: GPU-5fd4f087-86f3-7a43-b711-4771313afc50
+        type: string
+      hostname:
+        example: mtv5-dgx1-hgpu-031
+        type: string
+      ingestion_time:
+        example: "2025-01-01T00:00:00Z"
+        type: string
+      metric_name:
+        example: DCGM_FI_DEV_GPU_UTIL
+        type: string
+      model_name:
+        example: NVIDIA H100 80GB HBM3
+        type: string
+      namespace:
+        type: string
+      pod:
+        type: string
+      value:
+        example: "100"
+        type: string
+    type: object
+host: localhost:8081
+info:
+  contact:
+    email: support@example.com
+    name: API Support
+  description: REST API for querying GPU telemetry data
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  termsOfService: http://swagger.io/terms/
+  title: GPU Telemetry Pipeline API
+  version: "1.0"
+paths:
+  /gpus:
+    get:
+      consumes:
+      - application/json
+      description: Returns a list of all GPUs for which telemetry data exists. The
+        response includes GPU UUID, device ID, model, and hostname.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of GPUs with telemetry data
+          schema:
+            $ref: '#/definitions/pkg_api.ListGPUsResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/pkg_api.ErrorResponse'
+      summary: List all GPUs with telemetry
+      tags:
+      - GPUs
+  /gpus/{id}/telemetry:
+    get:
+      consumes:
+      - application/json
+      description: Returns all telemetry entries for a specific GPU, ordered by ingestion
+        time (oldest first). Supports optional time window filters via query parameters.
+        Both start_time and end_time are inclusive.
+      parameters:
+      - description: GPU UUID
+        example: GPU-5fd4f087-86f3-7a43-b711-4771313afc50
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Start time (inclusive, RFC3339 format)
+        example: "2025-01-01T00:00:00Z"
+        in: query
+        name: start_time
+        type: string
+      - description: End time (inclusive, RFC3339 format)
+        example: "2025-01-01T23:59:59Z"
+        in: query
+        name: end_time
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Telemetry records for the GPU
+          schema:
+            $ref: '#/definitions/pkg_api.GetTelemetryResponse'
+        "400":
+          description: Invalid GPU UUID or time range
+          schema:
+            $ref: '#/definitions/pkg_api.ErrorResponse'
+        "404":
+          description: GPU not found
+          schema:
+            $ref: '#/definitions/pkg_api.ErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/pkg_api.ErrorResponse'
+      summary: Get telemetry for a specific GPU
+      tags:
+      - Telemetry
+swagger: "2.0"

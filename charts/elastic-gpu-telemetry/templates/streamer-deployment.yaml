@@ -1,0 +1,39 @@
+{{- if .Values.streamer.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.streamer.name }}
+  labels:
+    {{- include "elastic-gpu-telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: streamer
+spec:
+  replicas: {{ .Values.streamer.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "elastic-gpu-telemetry.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: streamer
+  template:
+    metadata:
+      labels:
+        {{- include "elastic-gpu-telemetry.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: streamer
+    spec:
+      containers:
+      - name: streamer
+        image: {{ include "elastic-gpu-telemetry.image" (dict "Values" .Values "image" .Values.streamer.image "global" .Values.global) }}
+        imagePullPolicy: {{ .Values.streamer.image.pullPolicy }}
+        env:
+        {{- range $key, $value := .Values.streamer.env }}
+        - name: {{ $key }}
+          {{- if eq $key "STREAMER_INSTANCE_ID" }}
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+          {{- else }}
+          value: {{ $value | quote }}
+          {{- end }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.streamer.resources | nindent 10 }}
+{{- end }}
+

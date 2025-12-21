@@ -1,0 +1,172 @@
+# Default values for elastic-gpu-telemetry
+# This is a YAML-formatted file.
+
+# Global settings
+global:
+  imageRegistry: ""
+  imagePullPolicy: IfNotPresent
+  # Use local images (for kind)
+  useLocalImages: true
+
+# Queue Service Configuration
+queueService:
+  enabled: true
+  name: queue-service
+  image:
+    repository: elastic-gpu-telemetry-queue-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  
+  replicaCount: 1
+  
+  service:
+    type: ClusterIP
+    port: 8080
+    targetPort: 8080
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  
+  env:
+    QUEUE_PORT: "8080"
+    QUEUE_BUFFER_SIZE: "1000"
+    LOG_LEVEL: "info"
+
+# Storage Service Configuration
+storageService:
+  enabled: true
+  name: storage-service
+  image:
+    repository: elastic-gpu-telemetry-storage-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  
+  replicaCount: 1
+  
+  service:
+    type: ClusterIP
+    port: 8082
+    targetPort: 8082
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  
+  env:
+    STORAGE_PORT: "8082"
+    STORAGE_BACKEND: "memory"
+    STORAGE_URI: ""
+    LOG_LEVEL: "info"
+
+# Streamer Service Configuration
+streamer:
+  enabled: true
+  name: streamer
+  image:
+    repository: elastic-gpu-telemetry-streamer
+    tag: latest
+    pullPolicy: IfNotPresent
+  
+  # Replica count - can scale multiple streamers
+  replicaCount: 1
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  
+  env:
+    CSV_FILE_PATH: "/app/csv/dcgm_metrics_20250718_134233.csv"
+    STREAM_INTERVAL_MS: "100"
+    STREAMER_INSTANCE_ID: ""  # Auto-generated if empty
+    QUEUE_SERVICE_URL: "http://queue-service:8080"
+    LOG_LEVEL: "info"
+  
+  # Note: CSV files are baked into the Docker image during build
+  # No need for ConfigMap or PVC - files are in /app/csv/ in the container
+
+# Collector Service Configuration
+collector:
+  enabled: true
+  name: collector
+  image:
+    repository: elastic-gpu-telemetry-collector
+    tag: latest
+    pullPolicy: IfNotPresent
+  
+  # Replica count - can scale multiple collectors
+  replicaCount: 1
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  
+  env:
+    COLLECTOR_INSTANCE_ID: ""  # Auto-generated if empty
+    COLLECTOR_BATCH_SIZE: "1"
+    QUEUE_SERVICE_URL: "http://queue-service:8080"
+    STORAGE_BACKEND: "memory"
+    STORAGE_URI: ""
+    STORAGE_SERVICE_URL: "http://storage-service:8082"
+    LOG_LEVEL: "info"
+
+# API Gateway Configuration
+apiGateway:
+  enabled: true
+  name: api-gateway
+  image:
+    repository: elastic-gpu-telemetry-api-gateway
+    tag: latest
+    pullPolicy: IfNotPresent
+  
+  replicaCount: 1
+  
+  service:
+    type: NodePort  # Use NodePort for kind, or ClusterIP with port-forward
+    port: 8081
+    targetPort: 8081
+    nodePort: 30081  # Optional: specific NodePort (30000-32767)
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  
+  env:
+    API_PORT: "8081"
+    STORAGE_BACKEND: "memory"
+    STORAGE_URI: ""
+    STORAGE_SERVICE_URL: "http://storage-service:8082"
+    LOG_LEVEL: "info"
+  
+  # Ingress configuration (optional)
+  ingress:
+    enabled: false
+    className: "nginx"
+    annotations: {}
+    hosts:
+      - host: api-gpu-telemetry.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+

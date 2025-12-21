@@ -1,0 +1,69 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+docs/
+!docs/swagger/
+
+# Build artifacts
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+coverage.html
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Test files
+*_test.go
+testdata/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.log
+
+# Dependencies (will be downloaded in container)
+vendor/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Kubernetes/Helm (if not needed in image)
+k8s/
+helm/
+*.yaml
+*.yml
+!go.mod
+!go.sum
+
+# PDF files
+*.pdf
+
+# CSV files are included in Docker image (needed for streamer)
+# Don't ignore csv/ directory - it's copied into the image
+
+# Makefile (not needed in image)
+Makefile
