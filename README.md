@@ -360,12 +360,32 @@ GET /api/v1/gpus/{uuid}/telemetry?start_time=2025-01-01T00:00:00Z&end_time=2025-
 
 ## 🧪 Testing
 
-### Run Tests
+### Run Unit Tests
 
 Run all unit tests with race detection:
 ```bash
 make test
 ```
+
+### Run System/End-to-End Tests
+
+Run comprehensive system tests that start all services and test the complete pipeline flow:
+```bash
+make test-system
+```
+
+**Note:** System tests will:
+- ✅ Start all services (Queue, Storage, Collector, Streamer, API Gateway)
+- ✅ Test the complete data flow from CSV ingestion to API responses
+- ✅ Verify data integrity across the pipeline
+- ✅ Test multiple streamer/collector instances
+- ✅ Automatically clean up all services after tests
+
+**Test Coverage:**
+- End-to-end pipeline flow
+- Multiple streamer instances
+- Data integrity verification
+- Time range filtering
 
 ### Generate Coverage Report
 
@@ -384,7 +404,8 @@ make cover-func
 
 ### Test Coverage
 
-Current test coverage: **89.7%** (excluding `cmd/` packages)
+- **Unit Tests**: **89.7%** code coverage
+- **System Tests**: Complete end-to-end pipeline validation
 
 ## ⚙️ Configuration
 
@@ -614,7 +635,13 @@ make port-forward-bg-local
 
 6. **Run tests:**
    ```bash
+   # Run unit tests
    make test
+   
+   # Run system/end-to-end tests
+   make test-system
+   
+   # Generate coverage report
    make cover
    ```
 

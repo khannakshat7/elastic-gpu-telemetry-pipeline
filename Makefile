@@ -1,4 +1,4 @@
-.PHONY: build test run-streamer run-collector run-api run-queue clean help \
+.PHONY: build test test-system run-streamer run-collector run-api run-queue clean help \
 	deploy-local check-deps-local kind-create-local kind-load-images-local \
 	helm-deploy-local wait-for-pods-local port-forward-bg-local port-forward-stop-local
 
@@ -43,6 +43,20 @@ test:
 	else \
 		echo ""; \
 		echo "❌ Tests failed!"; \
+		exit 1; \
+	fi
+
+# Run system/end-to-end tests
+test-system:
+	@echo "🧪 Running system/end-to-end tests..."
+	@echo "This will start all services and test the complete pipeline flow..."
+	@echo ""
+	@if $(GOTEST) -v -timeout 60s ./tests/system/...; then \
+		echo ""; \
+		echo "✅ All system tests passed!"; \
+	else \
+		echo ""; \
+		echo "❌ System tests failed!"; \
 		exit 1; \
 	fi
 
@@ -349,7 +363,8 @@ helm-status:
 help:
 	@echo "Available targets:"
 	@echo "  build              - Build all services"
-	@echo "  test               - Run tests with race detection and basic coverage"
+	@echo "  test               - Run unit tests with race detection and basic coverage"
+	@echo "  test-system        - Run system/end-to-end tests (starts all services)"
 	@echo "  cover              - Generate detailed HTML coverage report"
 	@echo "  cover-func         - Show coverage by function"
 	@echo "  clean-coverage     - Clean coverage files"
