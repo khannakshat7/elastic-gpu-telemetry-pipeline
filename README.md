@@ -4,19 +4,19 @@ A scalable, production-ready telemetry pipeline for AI clusters that collects, p
 
 ## 📋 Table of Contents
 
-- 🎯[Overview](#-overview)
-- 🏗️[Architecture](#️-architecture)
-- ✨[Key Features](#-key-features)
-- 📦[Prerequisites](#-prerequisites)
-- 🚀[Quick Start](#-quick-start)
+- 🎯[ Overview](#-overview)
+- 🏗️[ Architecture](#️-architecture)
+- ✨[ Key Features](#-key-features)
+- 📦[ Prerequisites](#-prerequisites)
+- 🚀[ Quick Start](#-quick-start)
   - [Local Development (No Kubernetes)](#local-development-no-kubernetes)
   - [Kubernetes Deployment (kind)](#kubernetes-deployment-kind)
-- 🔨[Build and Packaging](#-build-and-packaging)
-- 📚[API Documentation](#-api-documentation)
-- 🧪[Testing](#-testing)
-- ⚙️[Configuration](#️-configuration)
-- 🔧[Troubleshooting](#-troubleshooting)
-- 🤖[AI Assistance](#-ai-assistance)
+- 🔨[ Build and Packaging](#-build-and-packaging)
+- 📚[ API Documentation](#-api-documentation)
+- 🧪[ Testing](#-testing)
+- ⚙️[ Configuration](#️-configuration)
+- 🔧[ Troubleshooting](#-troubleshooting)
+- 🤖[ AI Assistance](#-ai-assistance)
 
 ## 🎯 Overview
 
