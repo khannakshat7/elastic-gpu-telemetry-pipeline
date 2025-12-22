@@ -645,6 +645,53 @@ make port-forward-bg-local
    make cover
    ```
 
+## 🤖 AI Assistance
+
+This project utilized AI assistance for several key improvements and features:
+
+### 1. **System/End-to-End Test Development**
+   - Created comprehensive end-to-end test suite (`tests/system/e2e_test.go`)
+   - Implemented test scenarios covering:
+     - Complete pipeline flow (Streamer → Queue → Collector → Storage → API Gateway)
+     - Multiple streamer instances publishing to the same queue
+     - Data integrity verification across the pipeline
+   - Set up test infrastructure including:
+     - Temporary CSV file generation
+     - Service startup/shutdown helpers
+     - HTTP client configuration with proper timeouts
+     - Proper URL encoding for query parameters
+
+### 2. **Bug Fixes and Corrections**
+   - Fixed storage backend type issues (changed from "http" to "memory" with storage_service_url)
+   - Corrected API response type usage (TelemetryResponse vs GetTelemetryResponse)
+   - Fixed URL encoding for time range query parameters
+   - Resolved service startup timing issues
+
+### 3. **Documentation Enhancement**
+   - Enhanced README.md with:
+     - Emojis for better visual clarity
+     - Better organization and structure
+     - Local development section (no Kubernetes required)
+     - System testing documentation
+     - Improved troubleshooting sections
+   - Removed repetitive commands and consolidated information
+
+### 4. **Build System Improvements**
+   - Added Makefile targets:
+   - Integrated system tests into the development workflow
+
+### 5. **Testing Best Practices**
+   - Implemented proper test isolation (separate ports for each test)
+   - Added health check verification before running tests
+   - Implemented graceful cleanup of services
+   - Used appropriate timeouts and error handling
+
+### 6. **Code Quality**
+   - Ensured all tests pass successfully
+   - Fixed linting errors
+   - Maintained consistency with existing code patterns
+   - Used proper Go testing conventions
+
 **Happy coding! 🎉**
 ---
 
