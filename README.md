@@ -1,97 +1,98 @@
-# Elastic GPU Telemetry Pipeline
+# 🚀 Elastic GPU Telemetry Pipeline
 
 A scalable, production-ready telemetry pipeline for AI clusters that collects, processes, and exposes GPU telemetry data through a custom message queue architecture.
 
-## Table of Contents
+## 📋 Table of Contents
 
-- [Overview](#overview)
-- [Architecture](#architecture)
-- [Key Features](#key-features)
-- [Prerequisites](#prerequisites)
-- [Quick Start](#quick-start)
-- [Build and Packaging](#build-and-packaging)
-- [Deployment](#deployment)
-- [API Documentation](#api-documentation)
-- [User Workflow](#user-workflow)
-- [Testing](#testing)
-- [Configuration](#configuration)
-- [Troubleshooting](#troubleshooting)
+- [Overview](#-overview)
+- [Architecture](#-architecture)
+- [Key Features](#-key-features)
+- [Prerequisites](#-prerequisites)
+- [Quick Start](#-quick-start)
+  - [Local Development (No Kubernetes)](#local-development-no-kubernetes)
+  - [Kubernetes Deployment (kind)](#kubernetes-deployment-kind)
+- [Build and Packaging](#-build-and-packaging)
+- [API Documentation](#-api-documentation)
+- [Testing](#-testing)
+- [Configuration](#-configuration)
+- [Troubleshooting](#-troubleshooting)
 
-## Overview
+## 🎯 Overview
 
 The Elastic GPU Telemetry Pipeline is designed to handle telemetry data from AI clusters containing multiple hosts, each potentially hosting multiple GPUs. The system processes GPU metrics (utilization, temperature, memory, power, etc.) through a distributed pipeline that supports horizontal scaling.
 
 ### What This System Does
 
-1. **Ingests** GPU telemetry data from CSV files (simulating real-time streams)
-2. **Processes** telemetry through a custom message queue
-3. **Stores** processed data in a queryable storage layer
-4. **Exposes** telemetry data via RESTful APIs with OpenAPI documentation
+1. **📥 Ingests** GPU telemetry data from CSV files (simulating real-time streams)
+2. **⚙️ Processes** telemetry through a custom message queue
+3. **💾 Stores** processed data in a queryable storage layer
+4. **🌐 Exposes** telemetry data via RESTful APIs with OpenAPI documentation
 
 ### Key Design Principles
 
-- **Scalability**: Support up to 10 instances of streamers and collectors
-- **Extensibility**: Pluggable storage backends (in-memory → PostgreSQL)
-- **Observability**: Comprehensive logging and error handling
-- **Production-Ready**: Kubernetes-native with Helm charts
-- **Clean Architecture**: SOLID principles, repository pattern, dependency injection
+- **📈 Scalability**: Support up to 10 instances of streamers and collectors
+- **🔌 Extensibility**: Pluggable storage backends (in-memory → PostgreSQL)
+- **👁️ Observability**: Comprehensive logging and error handling
+- **🏭 Production-Ready**: Kubernetes-native with Helm charts
+- **🏗️ Clean Architecture**: SOLID principles, repository pattern, dependency injection
 
-## Architecture
+## 🏗️ Architecture
 
 ### System Components
 
 The pipeline consists of five main services:
 
-1. **Telemetry Streamer** (`cmd/streamer/`)
+1. **📡 Telemetry Streamer** (`cmd/streamer/`)
    - Reads telemetry data from CSV files
    - Publishes messages to the message queue
    - Supports multiple concurrent instances
    - Loops CSV data to simulate continuous streams
 
-2. **Custom Message Queue** (`cmd/queue-service/`)
+2. **📬 Custom Message Queue** (`cmd/queue-service/`)
    - Custom-built message queue (no external dependencies)
    - HTTP-based publish/subscribe interface
    - Supports fan-out to multiple collectors
    - In-memory implementation with optional persistence
 
-3. **Telemetry Collector** (`cmd/collector/`)
+3. **📥 Telemetry Collector** (`cmd/collector/`)
    - Consumes messages from the queue
    - Parses and validates telemetry data
    - Persists data to storage
    - Supports multiple concurrent instances
 
-4. **Storage Service** (`cmd/storage-service/`)
+4. **💾 Storage Service** (`cmd/storage-service/`)
    - Centralized storage abstraction
    - In-memory implementation (extensible to Postgres)
    - Provides HTTP API for data access
    - Indexed queries for efficient retrieval
 
-5. **API Gateway** (`cmd/api-gateway/`)
+5. **🌐 API Gateway** (`cmd/api-gateway/`)
    - RESTful HTTP API
    - OpenAPI/Swagger documentation
    - Query endpoints for GPU telemetry
    - Health checks and observability
 
 ### Architecture Diagram
+
 ![alt text](Elastic-gpu-pipeline.jpg)
 
 ### Data Flow
 
-1. **Ingestion**: Streamers read CSV rows and publish to queue
-2. **Buffering**: Queue service buffers messages for collectors
-3. **Processing**: Collectors consume, parse, and validate messages
-4. **Storage**: Processed data is persisted to storage service
-5. **Query**: API Gateway queries storage and serves HTTP responses
+1. **📥 Ingestion**: Streamers read CSV rows and publish to queue
+2. **📦 Buffering**: Queue service buffers messages for collectors
+3. **⚙️ Processing**: Collectors consume, parse, and validate messages
+4. **💾 Storage**: Processed data is persisted to storage service
+5. **🔍 Query**: API Gateway queries storage and serves HTTP responses
 
 ### Design Considerations
 
-- **Message Queue**: Custom implementation using Go channels and HTTP, designed for up to 10 producer/consumer instances
-- **Storage Abstraction**: Repository pattern allows swapping in-memory storage for PostgreSQL/MongoDB without code changes
-- **Scalability**: All services are stateless and horizontally scalable
-- **Fault Tolerance**: Graceful shutdown, error handling, and health checks
-- **Observability**: Structured logging, request tracing, and health endpoints
+- **📬 Message Queue**: Custom implementation using Go channels and HTTP, designed for up to 10 producer/consumer instances
+- **🗄️ Storage Abstraction**: Repository pattern allows swapping in-memory storage for PostgreSQL/MongoDB without code changes
+- **📈 Scalability**: All services are stateless and horizontally scalable
+- **🛡️ Fault Tolerance**: Graceful shutdown, error handling, and health checks
+- **👁️ Observability**: Structured logging, request tracing, and health endpoints
 
-## Key Features
+## ✨ Key Features
 
 - ✅ **Custom Message Queue**: No external dependencies (Kafka, RabbitMQ, etc.)
 - ✅ **Horizontal Scaling**: Support for multiple streamer/collector instances
@@ -101,13 +102,13 @@ The pipeline consists of five main services:
 - ✅ **Production Ready**: Docker images, health checks, graceful shutdown
 - ✅ **Extensible**: Pluggable storage backends
 
-## Prerequisites
+## 📦 Prerequisites
 
 ### Required Tools
 
 - **Go 1.22+**: [Installation Guide](https://go.dev/doc/install)
-- **Docker**: [Installation Guide](https://docs.docker.com/get-docker/)
-- **kind**: Kubernetes in Docker for local testing
+- **Docker** (for creating images and local cluster): [Installation Guide](https://docs.docker.com/get-docker/)
+- **kind** (for local Kubernetes deployment): Kubernetes in Docker for local testing
   ```bash
   # macOS
   brew install kind
@@ -117,12 +118,12 @@ The pipeline consists of five main services:
   chmod +x ./kind
   sudo mv ./kind /usr/local/bin/kind
   ```
-- **Helm 3.0+**: [Installation Guide](https://helm.sh/docs/intro/install/)
+- **Helm 3.0+** (for Kubernetes deployment): [Installation Guide](https://helm.sh/docs/intro/install/)
   ```bash
   # macOS
   brew install helm
   ```
-- **kubectl**: [Installation Guide](https://kubernetes.io/docs/tasks/tools/)
+- **kubectl** (for Kubernetes deployment): [Installation Guide](https://kubernetes.io/docs/tasks/tools/)
 
 ### Verify Installation
 
@@ -134,9 +135,9 @@ helm version
 kubectl version --client
 ```
 
-## Quick Start
+## 🚀 Quick Start
 
-### One-Command Local Deployment
+### Kubernetes Deployment (kind)
 
 Deploy the entire stack to a local Kubernetes cluster with a single command:
 
@@ -157,45 +158,105 @@ After deployment completes, access:
 - **API Gateway**: http://localhost:8081
 - **Swagger UI**: http://localhost:8081/swagger/index.html
 
-### Stop Port Forwarding
+#### Stop Port Forwarding
 
 ```bash
 make port-forward-stop-local
 ```
 
-### Cleanup
+#### Cleanup
 
 ```bash
 make cleanup-local
 ```
+### Local Development (No Kubernetes)
 
-## Build and Packaging
+Perfect for development and testing without Docker or Kubernetes! 🎯
 
-### Build Binaries
-
-Build all service binaries:
+#### Step 1: Build All Services
 
 ```bash
 make build
 ```
 
-Binaries will be created in the `bin/` directory:
+This creates binaries in the `bin/` directory:
 - `bin/streamer`
 - `bin/collector`
 - `bin/api-gateway`
 - `bin/queue-service`
 - `bin/storage-service`
 
+#### Step 2: Start Services in Separate Terminals
+
+**Terminal 1 - Queue Service:**
+```bash
+make run-queue
+# Or: go run ./cmd/queue-service
+```
+
+**Terminal 2 - Storage Service:**
+```bash
+make run-storage
+# Or: go run ./cmd/storage-service
+```
+
+**Terminal 3 - Collector:**
+```bash
+make run-collector
+# Or: go run ./cmd/collector
+```
+
+**Terminal 4 - Streamer:**
+```bash
+make run-streamer
+# Or: go run ./cmd/streamer
+```
+
+**Terminal 5 - API Gateway:**
+```bash
+make run-api
+# Or: go run ./cmd/api-gateway
+```
+
+#### Step 3: Access the API
+
+Once all services are running:
+
+- **API Gateway**: http://localhost:8081
+- **Swagger UI**: http://localhost:8081/swagger/index.html
+
+#### Quick Test
+
+```bash
+# List all GPUs
+curl http://localhost:8081/api/v1/gpus
+
+# Get telemetry for a specific GPU (replace UUID)
+curl http://localhost:8081/api/v1/gpus/GPU-<uuid>/telemetry
+```
+
+#### Stop Services
+
+Press `Ctrl+C` in each terminal to stop the services.
+
+## 🔨 Build and Packaging
+
+### Build Binaries
+
+```bash
+make build
+```
+
+Binaries will be created in the `bin/` directory.
+
 ### Build Docker Images
 
 Build all Docker images:
-
 ```bash
 make docker-all
 ```
 
 Or build individually:
-
 ```bash
 make docker-streamer
 make docker-collector
@@ -217,96 +278,13 @@ make clean          # Remove binaries
 make docker-clean   # Remove Docker images
 ```
 
-## Deployment
-
-### Local Deployment (kind)
-
-#### Option 1: One-Command Deployment (Recommended)
-
-```bash
-make deploy-local
-```
-
-#### Option 2: Manual Step-by-Step
-
-1. **Check Dependencies**
-   ```bash
-   make check-deps-local
-   ```
-
-2. **Create kind Cluster**
-   ```bash
-   make kind-create-local
-   # Or manually:
-   kind create cluster --name gpu-telemetry
-   ```
-
-3. **Build and Load Images**
-   ```bash
-   make kind-load-images-local
-   ```
-
-4. **Deploy Helm Chart**
-   ```bash
-   make helm-deploy-local
-   ```
-
-5. **Wait for Pods**
-   ```bash
-   make wait-for-pods-local
-   ```
-
-6. **Start Port Forwarding**
-   ```bash
-   make port-forward-bg-local
-   ```
-
-### Production Deployment
-
-For production deployments, you'll need:
-
-1. **Container Registry**: Push images to a registry (Docker Hub, GCR, ECR, etc.)
-2. **Kubernetes Cluster**: Production-grade cluster (EKS, GKE, AKS, etc.)
-3. **Helm Chart**: Install with production values
-
-```bash
-# Build and push images
-make docker-all DOCKER_TAG=v1.0.0
-docker push your-registry/elastic-gpu-telemetry-streamer:v1.0.0
-# ... push other images
-
-# Install Helm chart
-helm install elastic-gpu-telemetry ./charts/elastic-gpu-telemetry \
-  --set global.imageRegistry=your-registry \
-  --set streamer.replicaCount=3 \
-  --set collector.replicaCount=3
-```
-
-
-### Scaling Services
-
-Scale streamers and collectors:
-
-```bash
-helm upgrade elastic-gpu-telemetry ./charts/elastic-gpu-telemetry \
-  --set streamer.replicaCount=5 \
-  --set collector.replicaCount=3
-```
-
-## API Documentation
+## 📚 API Documentation
 
 ### Generate OpenAPI Specification
 
-Generate the OpenAPI/Swagger specification:
-
 ```bash
 make swagger
-```
-
-Or use the alias:
-
-```bash
-make openapi
+# Or: make openapi
 ```
 
 This generates:
@@ -316,26 +294,15 @@ This generates:
 
 ### View API Documentation
 
-#### Option 1: Swagger UI (Interactive)
+#### Option 1: Swagger UI (Interactive) 🌐
 
-1. Start the API Gateway:
-   ```bash
-   make run-api
-   # Or if deployed: make port-forward-bg-local
-   ```
-
-2. Open in browser:
-   ```
-   http://localhost:8081/swagger/index.html
-   ```
+1. Start the API Gateway (local or via port-forward)
+2. Open in browser: http://localhost:8081/swagger/index.html
 
 #### Option 2: View Generated Files
 
 ```bash
-# View JSON
 cat docs/swagger/swagger.json
-
-# View YAML
 cat docs/swagger/swagger.yaml
 ```
 
@@ -353,10 +320,13 @@ GET /api/v1/gpus
   "gpus": [
     {
       "uuid": "GPU-5fd4f087-86f3-7a43-b711-4771313afc50",
-      "gpu_id": "0",
-      "device": "nvidia0",
+      "gpu_index": "0",
+      "device_id": "nvidia0",
       "model_name": "NVIDIA H100 80GB HBM3",
-      "hostname": "mtv5-dgx1-hgpu-031"
+      "hostname": "mtv5-dgx1-hgpu-031",
+      "container": "gpu-workload",
+      "pod": "pod-1",
+      "namespace": "team1"
     }
   ],
   "count": 1
@@ -388,73 +358,11 @@ GET /api/v1/gpus/{uuid}/telemetry?start_time=2025-01-01T00:00:00Z&end_time=2025-
 }
 ```
 
-## User Workflow
-
-### Complete Workflow Example
-
-1. **Deploy the System**
-   ```bash
-   make deploy-local
-   ```
-
-2. **Generate API Documentation**
-   ```bash
-   make swagger
-   ```
-
-3. **Access Swagger UI**
-   - Open: http://localhost:8081/swagger/index.html
-   - Or ensure port forwarding is active: `make port-forward-bg-local`
-
-4. **Test API Endpoints**
-
-   **List all GPUs:**
-   ```bash
-   curl http://localhost:8081/api/v1/gpus
-   ```
-
-   **Get telemetry for a specific GPU:**
-   ```bash
-   # First, get a GPU UUID from the list above
-   GPU_UUID="GPU-5fd4f087-86f3-7a43-b711-4771313afc50"
-   
-   # Get all telemetry
-   curl "http://localhost:8081/api/v1/gpus/${GPU_UUID}/telemetry"
-   
-   # Get telemetry with time filter
-   curl "http://localhost:8081/api/v1/gpus/${GPU_UUID}/telemetry?start_time=2025-01-01T00:00:00Z&end_time=2025-01-01T23:59:59Z"
-   ```
-
-5. **View Service Logs**
-   ```bash
-   # Streamer logs
-   kubectl logs -l app.kubernetes.io/component=streamer -f
-   
-   # Collector logs
-   kubectl logs -l app.kubernetes.io/component=collector -f
-   
-   # API Gateway logs
-   kubectl logs -l app.kubernetes.io/component=api-gateway -f
-   ```
-
-6. **Check Service Status**
-   ```bash
-   kubectl get pods
-   kubectl get svc
-   helm status elastic-gpu-telemetry
-   ```
-
-7. **Cleanup**
-   ```bash
-   make cleanup-local
-   ```
-
-## Testing
+## 🧪 Testing
 
 ### Run Tests
 
 Run all unit tests with race detection:
-
 ```bash
 make test
 ```
@@ -462,7 +370,6 @@ make test
 ### Generate Coverage Report
 
 Generate HTML coverage report:
-
 ```bash
 make cover
 ```
@@ -479,7 +386,7 @@ make cover-func
 
 Current test coverage: **89.7%** (excluding `cmd/` packages)
 
-## Configuration
+## ⚙️ Configuration
 
 ### Environment Variables
 
@@ -488,19 +395,19 @@ Current test coverage: **89.7%** (excluding `cmd/` packages)
 - `CSV_FILE_PATH`: Path to CSV file (default: `/app/csv/dcgm_metrics_20250718_134233.csv`)
 - `STREAM_INTERVAL_MS`: Interval between messages in milliseconds (default: `100`)
 - `STREAMER_INSTANCE_ID`: Unique instance identifier
-- `QUEUE_SERVICE_URL`: Queue service URL (default: in-memory queue)
+- `QUEUE_SERVICE_URL`: Queue service URL (default: `http://localhost:8080`)
 
 #### Collector
 
 - `COLLECTOR_BATCH_SIZE`: Batch size for processing messages (default: `10`)
 - `COLLECTOR_INSTANCE_ID`: Unique instance identifier
-- `QUEUE_SERVICE_URL`: Queue service URL (default: in-memory queue)
-- `STORAGE_SERVICE_URL`: Storage service URL (default: in-memory storage)
+- `QUEUE_SERVICE_URL`: Queue service URL (default: `http://localhost:8080`)
+- `STORAGE_SERVICE_URL`: Storage service URL (default: `http://localhost:8082`)
 
 #### API Gateway
 
 - `API_PORT`: HTTP server port (default: `8081`)
-- `STORAGE_SERVICE_URL`: Storage service URL (default: in-memory storage)
+- `STORAGE_SERVICE_URL`: Storage service URL (default: `http://localhost:8082`)
 
 #### Queue Service
 
@@ -513,7 +420,7 @@ Current test coverage: **89.7%** (excluding `cmd/` packages)
 
 ### Helm Configuration
 
-Edit `charts/elastic-gpu-telemetry/values.yaml` or use `--set` flags:
+For Kubernetes deployments, edit `charts/elastic-gpu-telemetry/values.yaml` or use `--set` flags:
 
 ```bash
 helm install elastic-gpu-telemetry ./charts/elastic-gpu-telemetry \
@@ -522,10 +429,18 @@ helm install elastic-gpu-telemetry ./charts/elastic-gpu-telemetry \
   --set streamer.env.STREAM_INTERVAL_MS=50
 ```
 
+### Scaling Services (Kubernetes)
 
-## Troubleshooting
+```bash
+helm upgrade elastic-gpu-telemetry ./charts/elastic-gpu-telemetry \
+  --set streamer.replicaCount=5 \
+  --set collector.replicaCount=3
+```
 
-### Pods Not Starting
+## 🔧 Troubleshooting
+### Kubernetes Deployment Issues
+
+#### Pods Not Starting
 
 ```bash
 # Check pod status
@@ -538,16 +453,15 @@ kubectl describe pod <pod-name>
 kubectl get events --sort-by='.lastTimestamp'
 ```
 
-### Images Not Found
+#### Images Not Found
 
 Ensure images are loaded into kind:
-
 ```bash
 docker images | grep elastic-gpu-telemetry
 make kind-load-images-local
 ```
 
-### Service Not Accessible
+#### Service Not Accessible
 
 ```bash
 # Check service endpoints
@@ -561,9 +475,7 @@ make port-forward-stop-local
 make port-forward-bg-local
 ```
 
-### Empty API Responses
-
-If API returns empty data:
+#### Empty API Responses
 
 1. **Check if streamer is running:**
    ```bash
@@ -586,7 +498,7 @@ If API returns empty data:
    kubectl get deployment streamer -o yaml | grep -A 10 env
    ```
 
-### Port Forward Issues
+#### Port Forward Issues
 
 ```bash
 # Stop existing port forward
@@ -598,3 +510,118 @@ lsof -i :8081
 # Start fresh port forward
 make port-forward-bg-local
 ```
+### Local Development Issues
+
+#### Services Not Starting
+
+1. **Check if ports are already in use:**
+   ```bash
+   lsof -i :8080  # Queue Service
+   lsof -i :8081  # API Gateway
+   lsof -i :8082  # Storage Service
+   ```
+
+2. **Verify CSV file exists:**
+   ```bash
+   ls -la csv/dcgm_metrics_20250718_134233.csv
+   ```
+
+3. **Check service logs** for error messages in the terminal where you started each service
+
+#### API Returns Empty Data
+
+1. **Verify all services are running:**
+   - Queue Service (port 8080)
+   - Storage Service (port 8082)
+   - Collector
+   - Streamer
+   - API Gateway (port 8081)
+
+2. **Check service connectivity:**
+   - Streamer → Queue Service
+   - Collector → Queue Service
+   - Collector → Storage Service
+   - API Gateway → Storage Service
+
+3. **Verify CSV file path** matches the `CSV_FILE_PATH` environment variable
+
+## 📝 User Workflow Example
+
+### Complete Workflow (Kubernetes)
+
+1. **Deploy the system:**
+   ```bash
+   make deploy-local
+   ```
+
+2. **Check service status:**
+   ```bash
+   kubectl get pods
+   kubectl get svc
+   helm status elastic-gpu-telemetry
+   ```
+
+3. **View service logs:**
+   ```bash
+   kubectl logs -l app.kubernetes.io/component=streamer -f
+   kubectl logs -l app.kubernetes.io/component=collector -f
+   kubectl logs -l app.kubernetes.io/component=api-gateway -f
+   ```
+
+4. **Cleanup:**
+   ```bash
+   make cleanup-local
+   ```
+
+---
+
+### Complete Workflow (Local Development)
+
+1. **Build services:**
+   ```bash
+   make build
+   ```
+
+2. **Start services** (in separate terminals):
+   ```bash
+   make run-queue      # Terminal 1
+   make run-storage    # Terminal 2
+   make run-collector  # Terminal 3
+   make run-streamer   # Terminal 4
+   make run-api        # Terminal 5
+   ```
+
+3. **Generate API documentation:**
+   ```bash
+   make swagger
+   ```
+
+4. **Access Swagger UI:**
+   - Open: http://localhost:8081/swagger/index.html
+
+5. **Test API endpoints:**
+   ```bash
+   # List all GPUs
+   curl http://localhost:8081/api/v1/gpus
+   
+   # Get telemetry for a specific GPU
+   GPU_UUID="GPU-5fd4f087-86f3-7a43-b711-4771313afc50"
+   curl "http://localhost:8081/api/v1/gpus/${GPU_UUID}/telemetry"
+   
+   # Get telemetry with time filter
+   curl "http://localhost:8081/api/v1/gpus/${GPU_UUID}/telemetry?start_time=2025-01-01T00:00:00Z&end_time=2025-01-01T23:59:59Z"
+   ```
+
+6. **Run tests:**
+   ```bash
+   make test
+   make cover
+   ```
+
+**Happy coding! 🎉**
+---
+
+<p align="center">
+  <em>Built with ❤️ by Akshat Khanna</em>
+</p>
+
