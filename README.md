@@ -5,7 +5,7 @@ A scalable, production-ready telemetry pipeline for AI clusters that collects, p
 ## 📋 Table of Contents
 
 - [Overview](#-overview)
-- [Architecture](#-architecture)
+- [Architecture](#️-architecture)
 - [Key Features](#-key-features)
 - [Prerequisites](#-prerequisites)
 - [Quick Start](#-quick-start)
@@ -16,6 +16,7 @@ A scalable, production-ready telemetry pipeline for AI clusters that collects, p
 - [Testing](#-testing)
 - [Configuration](#-configuration)
 - [Troubleshooting](#-troubleshooting)
+- [AI Assistance](#-ai-assistance)
 
 ## 🎯 Overview
 
@@ -677,7 +678,7 @@ This project utilized AI assistance for several key improvements and features:
    - Removed repetitive commands and consolidated information
 
 ### 4. **Build System Improvements**
-   - Added Makefile targets:
+   - Added Makefile targets
    - Integrated system tests into the development workflow
 
 ### 5. **Testing Best Practices**
