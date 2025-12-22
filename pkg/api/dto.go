@@ -44,10 +44,35 @@ type GetTelemetryResponse struct {
 	EndTime   *time.Time          `json:"end_time,omitempty"`
 }
 
-// ErrorResponse represents an error in API responses
+// ErrorResponse represents a generic error in API responses
+// This is the base error response structure used by all error types
 type ErrorResponse struct {
+	Error     string    `json:"error"`
+	Message   string    `json:"message,omitempty"`
+	Code      string    `json:"code,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// BadRequestErrorResponse represents a 400 Bad Request error response
+type BadRequestErrorResponse struct {
+	Error     string    `json:"error" example:"Invalid GPU UUID"`
+	Message   string    `json:"message,omitempty" example:"Invalid GPU UUID"`
+	Code      string    `json:"code,omitempty" example:"INVALID_GPU_UUID"`
+	Timestamp time.Time `json:"timestamp" example:"2025-01-01T00:00:00Z"`
+}
+
+// NotFoundErrorResponse represents a 404 Not Found error response
+type NotFoundErrorResponse struct {
 	Error     string    `json:"error" example:"GPU not found"`
-	Message   string    `json:"message,omitempty" example:"The requested GPU UUID does not exist"`
+	Message   string    `json:"message,omitempty" example:"GPU with UUID 'GPU-5fd4f087-86f3-7a43-b711-4771313afc50' not found"`
 	Code      string    `json:"code,omitempty" example:"GPU_NOT_FOUND"`
+	Timestamp time.Time `json:"timestamp" example:"2025-01-01T00:00:00Z"`
+}
+
+// InternalServerErrorResponse represents a 500 Internal Server Error response
+type InternalServerErrorResponse struct {
+	Error     string    `json:"error" example:"Internal server error: database connection failed"`
+	Message   string    `json:"message,omitempty" example:"Internal server error: database connection failed"`
+	Code      string    `json:"code,omitempty" example:"INTERNAL_ERROR"`
 	Timestamp time.Time `json:"timestamp" example:"2025-01-01T00:00:00Z"`
 }

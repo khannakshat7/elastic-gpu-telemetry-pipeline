@@ -1,15 +1,15 @@
 basePath: /api/v1
 definitions:
-  pkg_api.ErrorResponse:
+  pkg_api.BadRequestErrorResponse:
     properties:
       code:
-        example: GPU_NOT_FOUND
+        example: INVALID_GPU_UUID
         type: string
       error:
-        example: GPU not found
+        example: Invalid GPU UUID
         type: string
       message:
-        example: The requested GPU UUID does not exist
+        example: Invalid GPU UUID
         type: string
       timestamp:
         example: "2025-01-01T00:00:00Z"
@@ -58,6 +58,21 @@ definitions:
       start_time:
         type: string
     type: object
+  pkg_api.InternalServerErrorResponse:
+    properties:
+      code:
+        example: INTERNAL_ERROR
+        type: string
+      error:
+        example: 'Internal server error: database connection failed'
+        type: string
+      message:
+        example: 'Internal server error: database connection failed'
+        type: string
+      timestamp:
+        example: "2025-01-01T00:00:00Z"
+        type: string
+    type: object
   pkg_api.ListGPUsResponse:
     properties:
       count:
@@ -66,6 +81,21 @@ definitions:
         items:
           $ref: '#/definitions/pkg_api.GPUResponse'
         type: array
+    type: object
+  pkg_api.NotFoundErrorResponse:
+    properties:
+      code:
+        example: GPU_NOT_FOUND
+        type: string
+      error:
+        example: GPU not found
+        type: string
+      message:
+        example: GPU with UUID 'GPU-5fd4f087-86f3-7a43-b711-4771313afc50' not found
+        type: string
+      timestamp:
+        example: "2025-01-01T00:00:00Z"
+        type: string
     type: object
   pkg_api.TelemetryResponse:
     properties:
@@ -123,7 +153,7 @@ paths:
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/pkg_api.ErrorResponse'
+            $ref: '#/definitions/pkg_api.InternalServerErrorResponse'
       summary: List all GPUs with telemetry
       tags:
       - GPUs
@@ -161,15 +191,15 @@ paths:
         "400":
           description: Invalid GPU UUID or time range
           schema:
-            $ref: '#/definitions/pkg_api.ErrorResponse'
+            $ref: '#/definitions/pkg_api.BadRequestErrorResponse'
         "404":
           description: GPU not found
           schema:
-            $ref: '#/definitions/pkg_api.ErrorResponse'
+            $ref: '#/definitions/pkg_api.NotFoundErrorResponse'
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/pkg_api.ErrorResponse'
+            $ref: '#/definitions/pkg_api.InternalServerErrorResponse'
       summary: Get telemetry for a specific GPU
       tags:
       - Telemetry

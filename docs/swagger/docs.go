@@ -46,7 +46,7 @@ const docTemplate = `{
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/pkg_api.ErrorResponse"
+                            "$ref": "#/definitions/pkg_api.InternalServerErrorResponse"
                         }
                     }
                 }
@@ -99,19 +99,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid GPU UUID or time range",
                         "schema": {
-                            "$ref": "#/definitions/pkg_api.ErrorResponse"
+                            "$ref": "#/definitions/pkg_api.BadRequestErrorResponse"
                         }
                     },
                     "404": {
                         "description": "GPU not found",
                         "schema": {
-                            "$ref": "#/definitions/pkg_api.ErrorResponse"
+                            "$ref": "#/definitions/pkg_api.NotFoundErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/pkg_api.ErrorResponse"
+                            "$ref": "#/definitions/pkg_api.InternalServerErrorResponse"
                         }
                     }
                 }
@@ -119,20 +119,20 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "pkg_api.ErrorResponse": {
+        "pkg_api.BadRequestErrorResponse": {
             "type": "object",
             "properties": {
                 "code": {
                     "type": "string",
-                    "example": "GPU_NOT_FOUND"
+                    "example": "INVALID_GPU_UUID"
                 },
                 "error": {
                     "type": "string",
-                    "example": "GPU not found"
+                    "example": "Invalid GPU UUID"
                 },
                 "message": {
                     "type": "string",
-                    "example": "The requested GPU UUID does not exist"
+                    "example": "Invalid GPU UUID"
                 },
                 "timestamp": {
                     "type": "string",
@@ -201,6 +201,27 @@ const docTemplate = `{
                 }
             }
         },
+        "pkg_api.InternalServerErrorResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "INTERNAL_ERROR"
+                },
+                "error": {
+                    "type": "string",
+                    "example": "Internal server error: database connection failed"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "Internal server error: database connection failed"
+                },
+                "timestamp": {
+                    "type": "string",
+                    "example": "2025-01-01T00:00:00Z"
+                }
+            }
+        },
         "pkg_api.ListGPUsResponse": {
             "type": "object",
             "properties": {
@@ -212,6 +233,27 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/pkg_api.GPUResponse"
                     }
+                }
+            }
+        },
+        "pkg_api.NotFoundErrorResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "GPU_NOT_FOUND"
+                },
+                "error": {
+                    "type": "string",
+                    "example": "GPU not found"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "GPU with UUID 'GPU-5fd4f087-86f3-7a43-b711-4771313afc50' not found"
+                },
+                "timestamp": {
+                    "type": "string",
+                    "example": "2025-01-01T00:00:00Z"
                 }
             }
         },

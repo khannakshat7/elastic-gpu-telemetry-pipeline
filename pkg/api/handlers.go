@@ -28,8 +28,8 @@ func NewHandlers(repository storage.Repository) *Handlers {
 //	@Tags			GPUs
 //	@Accept			json
 //	@Produce		json
-//	@Success		200	{object}	ListGPUsResponse	"List of GPUs with telemetry data"
-//	@Failure		500	{object}	ErrorResponse		"Internal server error"
+//	@Success		200	{object}	ListGPUsResponse				"List of GPUs with telemetry data"
+//	@Failure		500	{object}	InternalServerErrorResponse	"Internal server error"
 //	@Router			/gpus [get]
 func (h *Handlers) ListGPUs(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -73,10 +73,10 @@ func (h *Handlers) ListGPUs(c *gin.Context) {
 //	@Param			id			path		string	true	"GPU UUID"													example(GPU-5fd4f087-86f3-7a43-b711-4771313afc50)
 //	@Param			start_time	query		string	false	"Start time (inclusive, RFC3339 format)"					example(2025-01-01T00:00:00Z)
 //	@Param			end_time	query		string	false	"End time (inclusive, RFC3339 format)"					example(2025-01-01T23:59:59Z)
-//	@Success		200			{object}	GetTelemetryResponse	"Telemetry records for the GPU"
-//	@Failure		400			{object}	ErrorResponse		"Invalid GPU UUID or time range"
-//	@Failure		404			{object}	ErrorResponse		"GPU not found"
-//	@Failure		500			{object}	ErrorResponse		"Internal server error"
+//	@Success		200			{object}	GetTelemetryResponse			"Telemetry records for the GPU"
+//	@Failure		400			{object}	BadRequestErrorResponse		"Invalid GPU UUID or time range"
+//	@Failure		404			{object}	NotFoundErrorResponse		"GPU not found"
+//	@Failure		500			{object}	InternalServerErrorResponse	"Internal server error"
 //	@Router			/gpus/{id}/telemetry [get]
 func (h *Handlers) GetTelemetryByGPU(c *gin.Context) {
 	ctx := c.Request.Context()
