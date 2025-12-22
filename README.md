@@ -129,7 +129,7 @@ The pipeline consists of five main services:
 ### Verify Installation
 
 ```bash
-go version        # Should be 1.22 or higher
+go version        # Should be 1.24 or higher
 docker --version
 kind --version
 helm version
