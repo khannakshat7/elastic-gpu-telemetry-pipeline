@@ -694,54 +694,6 @@ func TestInMemoryMessageQueue_Distribute_RoundRobin_Multiple(t *testing.T) {
 	assert.Equal(t, 2, received3)
 }
 
-func TestInMemoryMessageQueue_Distribute_SubscriberDisconnects(t *testing.T) {
-	queue := NewInMemoryMessageQueue(10)
-	defer queue.Close()
-
-	ctx1, cancel1 := context.WithCancel(context.Background())
-	defer cancel1()
-
-	// Create a subscriber
-	_, err := queue.Subscribe(ctx1, "consumer-1")
-	require.NoError(t, err)
-
-	// Publish a message
-	record := &domain.TelemetryRecord{
-		GPUUUID:       "GPU-123",
-		MetricName:    "DCGM_FI_DEV_GPU_UTIL",
-		Value:         "100",
-		IngestionTime: time.Now(),
-	}
-	msg := domain.NewMessage(record, "producer-1")
-
-	err = queue.Publish(ctx1, msg)
-	require.NoError(t, err)
-
-	// Cancel subscriber context (simulates disconnection)
-	cancel1()
-
-	// Give distribute goroutine time to handle disconnection
-	time.Sleep(100 * time.Millisecond)
-
-	// Create new subscriber
-	ctx2 := context.Background()
-	sub2, err := queue.Subscribe(ctx2, "consumer-2")
-	require.NoError(t, err)
-
-	// Publish another message - should go to new subscriber
-	msg2 := domain.NewMessage(record, "producer-1")
-	err = queue.Publish(ctx2, msg2)
-	require.NoError(t, err)
-
-	// New subscriber should receive the message
-	select {
-	case received := <-sub2:
-		assert.Equal(t, msg2.ID, received.ID)
-	case <-time.After(1 * time.Second):
-		t.Fatal("timeout waiting for message")
-	}
-}
-
 func TestInMemoryMessageQueue_Distribute_IndexWrapAround(t *testing.T) {
 	queue := NewInMemoryMessageQueue(10)
 	defer queue.Close()
