@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -29,7 +30,7 @@ func main() {
 		"port", port,
 		"storage_backend", cfg.StorageBackend)
 
-	// Create storage repository (in-memory for now)
+	// Create storage repository
 	var repository storage.Repository
 	if cfg.StorageBackend == "memory" {
 		repository = memory.NewStore()
@@ -37,9 +38,25 @@ func main() {
 	} else {
 		// For other backends, use factory
 		storageConfig := map[string]string{}
-		if cfg.StorageURI != "" {
+
+		// Build PostgreSQL connection string from environment variables if backend is postgres
+		if cfg.StorageBackend == "postgres" {
+			postgresHost := getEnv("POSTGRES_HOST", "localhost")
+			postgresPort := getEnv("POSTGRES_PORT", "5432")
+			postgresUser := getEnv("POSTGRES_USER", "postgres")
+			postgresPassword := getEnv("POSTGRES_PASSWORD", "postgres")
+			postgresDB := getEnv("POSTGRES_DB", "gpu_telemetry")
+			postgresSSLMode := getEnv("POSTGRES_SSLMODE", "disable")
+
+			// Build connection string
+			connectionString := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+				postgresHost, postgresPort, postgresUser, postgresPassword, postgresDB, postgresSSLMode)
+			storageConfig["connection_string"] = connectionString
+			utils.Logger.Info("Using PostgreSQL storage", "host", postgresHost, "db", postgresDB)
+		} else if cfg.StorageURI != "" {
 			storageConfig["uri"] = cfg.StorageURI
 		}
+
 		var err error
 		repository, err = storage.NewRepository(storage.BackendType(cfg.StorageBackend), storageConfig)
 		if err != nil {
@@ -181,6 +198,13 @@ func main() {
 	}
 
 	utils.Logger.Info("Storage Service stopped")
+
+	// Close storage repository if it has a Close method (e.g., PostgreSQL)
+	if closer, ok := repository.(interface{ Close() error }); ok {
+		if err := closer.Close(); err != nil {
+			utils.Logger.Error("Error closing storage repository", "error", err)
+		}
+	}
 }
 
 func getEnv(key, defaultValue string) string {

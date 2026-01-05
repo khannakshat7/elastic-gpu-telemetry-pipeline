@@ -52,20 +52,26 @@ The pipeline consists of five main services:
 2. **📬 Custom Message Queue** (`cmd/queue-service/`)
    - Custom-built message queue (no external dependencies)
    - HTTP-based publish/subscribe interface
-   - Supports fan-out to multiple collectors
+   - Push-based message delivery using Server-Sent Events (SSE)
+   - Work queue pattern (round-robin distribution) - each message delivered to one collector
+   - ACK mechanism prevents message loss
    - In-memory implementation with optional persistence
 
 3. **📥 Telemetry Collector** (`cmd/collector/`)
-   - Consumes messages from the queue
+   - Subscribes to queue via push-based SSE connection
+   - Receives messages pushed by queue service (no polling)
    - Parses and validates telemetry data
+   - Sends ACK after successful processing to prevent message loss
    - Persists data to storage
-   - Supports multiple concurrent instances
+   - Supports multiple concurrent instances with work queue distribution
 
 4. **💾 Storage Service** (`cmd/storage-service/`)
    - Centralized storage abstraction
-   - In-memory implementation (extensible to Postgres)
+   - **PostgreSQL backend** (default) with automatic schema initialization
+   - In-memory implementation available for development/testing
    - Provides HTTP API for data access
    - Indexed queries for efficient retrieval
+   - Persistent data storage with automatic migrations
 
 5. **🌐 API Gateway** (`cmd/api-gateway/`)
    - RESTful HTTP API
@@ -80,15 +86,16 @@ The pipeline consists of five main services:
 ### Data Flow
 
 1. **📥 Ingestion**: Streamers read CSV rows and publish to queue
-2. **📦 Buffering**: Queue service buffers messages for collectors
-3. **⚙️ Processing**: Collectors consume, parse, and validate messages
-4. **💾 Storage**: Processed data is persisted to storage service
-5. **🔍 Query**: API Gateway queries storage and serves HTTP responses
+2. **📦 Buffering**: Queue service buffers messages and distributes using work queue pattern
+3. **📤 Push Delivery**: Queue service pushes messages to collectors via SSE (Server-Sent Events)
+4. **⚙️ Processing**: Collectors receive messages, parse, validate, and persist to storage
+5. **✅ Acknowledgment**: Collectors send ACK to queue after successful processing
+6. **🔍 Query**: API Gateway queries storage and serves HTTP responses
 
 ### Design Considerations
 
-- **📬 Message Queue**: Custom implementation using Go channels and HTTP, designed for up to 10 producer/consumer instances
-- **🗄️ Storage Abstraction**: Repository pattern allows swapping in-memory storage for PostgreSQL/MongoDB without code changes
+- **📬 Message Queue**: Custom implementation using Go channels and HTTP with push-based delivery (SSE). Uses work queue pattern for load distribution. ACK mechanism ensures no message loss. Designed for up to 10 producer/consumer instances
+- **🗄️ Storage Abstraction**: Repository pattern with PostgreSQL backend (default) and in-memory option for development. Automatic schema initialization and migrations.
 - **📈 Scalability**: All services are stateless and horizontally scalable
 - **🛡️ Fault Tolerance**: Graceful shutdown, error handling, and health checks
 - **👁️ Observability**: Structured logging, request tracing, and health endpoints
@@ -101,13 +108,14 @@ The pipeline consists of five main services:
 - ✅ **Kubernetes Native**: Helm charts for easy deployment
 - ✅ **Comprehensive Testing**: Unit tests with 89.7% code coverage
 - ✅ **Production Ready**: Docker images, health checks, graceful shutdown
-- ✅ **Extensible**: Pluggable storage backends
+- ✅ **Extensible**: Pluggable storage backends (PostgreSQL, in-memory)
+- ✅ **Persistent Storage**: PostgreSQL backend with automatic schema management
 
 ## 📦 Prerequisites
 
 ### Required Tools
 
-- **Go 1.22+**: [Installation Guide](https://go.dev/doc/install)
+- **Go 1.25+**: [Installation Guide](https://go.dev/doc/install)
 - **Docker** (for creating images and local cluster): [Installation Guide](https://docs.docker.com/get-docker/)
 - **kind** (for local Kubernetes deployment): Kubernetes in Docker for local testing
   ```bash
@@ -129,7 +137,7 @@ The pipeline consists of five main services:
 ### Verify Installation
 
 ```bash
-go version        # Should be 1.24 or higher
+go version        # Should be 1.25 or higher
 docker --version
 kind --version
 helm version
@@ -405,7 +413,7 @@ make cover-func
 
 ### Test Coverage
 
-- **Unit Tests**: **89.7%** code coverage
+- **Unit Tests**: **89.7%** code coverage (including PostgreSQL storage tests)
 - **System Tests**: Complete end-to-end pipeline validation
 
 ## ⚙️ Configuration
@@ -439,6 +447,13 @@ make cover-func
 #### Storage Service
 
 - `STORAGE_PORT`: HTTP server port (default: `8082`)
+- `STORAGE_BACKEND`: Storage backend type - `"postgres"` (default) or `"memory"` (default: `"postgres"`)
+- `POSTGRES_HOST`: PostgreSQL hostname (default: `"postgres"` in Kubernetes, `"localhost"` locally)
+- `POSTGRES_PORT`: PostgreSQL port (default: `"5432"`)
+- `POSTGRES_USER`: PostgreSQL username (default: `"postgres"`)
+- `POSTGRES_PASSWORD`: PostgreSQL password (default: `"postgres"`)
+- `POSTGRES_DB`: PostgreSQL database name (default: `"gpu_telemetry"`)
+- `POSTGRES_SSLMODE`: PostgreSQL SSL mode (default: `"disable"` for local/kind clusters)
 
 ### Helm Configuration
 
@@ -449,6 +464,35 @@ helm install elastic-gpu-telemetry ./charts/elastic-gpu-telemetry \
   --set streamer.replicaCount=3 \
   --set collector.replicaCount=2 \
   --set streamer.env.STREAM_INTERVAL_MS=50
+```
+
+#### PostgreSQL Configuration
+
+The Helm chart includes PostgreSQL as a StatefulSet with persistent storage. Configuration options:
+
+```yaml
+postgres:
+  enabled: true
+  name: postgres
+  image:
+    repository: postgres
+    tag: "15-alpine"
+  auth:
+    username: postgres
+    password: postgres
+    database: gpu_telemetry
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ""  # Uses default storage class
+```
+
+To disable PostgreSQL and use in-memory storage:
+
+```bash
+helm install elastic-gpu-telemetry ./charts/elastic-gpu-telemetry \
+  --set postgres.enabled=false \
+  --set storageService.env.STORAGE_BACKEND=memory
 ```
 
 ### Scaling Services (Kubernetes)
@@ -514,8 +558,16 @@ make port-forward-bg-local
    - Collector → Queue Service
    - Collector → Storage Service
    - API Gateway → Storage Service
+   - Storage Service → PostgreSQL (if using PostgreSQL backend)
 
-4. **Check environment variables:**
+4. **Check PostgreSQL status:**
+   ```bash
+   kubectl get pods -l app.kubernetes.io/component=postgres
+   kubectl logs -l app.kubernetes.io/component=postgres
+   kubectl exec -it postgres-0 -- psql -U postgres -d gpu_telemetry -c "\dt"
+   ```
+
+5. **Check environment variables:**
    ```bash
    kubectl get deployment streamer -o yaml | grep -A 10 env
    ```

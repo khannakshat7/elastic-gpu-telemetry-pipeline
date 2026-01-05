@@ -86,6 +86,8 @@ func TestSystem_EndToEndFlow(t *testing.T) {
 	require.NoError(t, err)
 
 	queueClient := mq.NewHTTPMessageQueue(fmt.Sprintf("http://localhost:%s", queuePort))
+	// Set consumer ID to match collector instance ID for ACK
+	queueClient.SetConsumerID(collectorCfg.InstanceID)
 	collector, err := collector.NewCollector(collectorCfg, queueClient, collectorStorage)
 	require.NoError(t, err)
 
@@ -98,6 +100,10 @@ func TestSystem_EndToEndFlow(t *testing.T) {
 		collector.Stop()
 		<-collectorDone
 	}()
+
+	// Give collector time to establish SSE connection
+	// Wait longer to ensure SSE connection is fully established
+	time.Sleep(500 * time.Millisecond)
 
 	// Step 4: Start Streamer
 	streamerCfg := &config.StreamerConfig{
@@ -141,7 +147,8 @@ func TestSystem_EndToEndFlow(t *testing.T) {
 	}, 5*time.Second, 100*time.Millisecond, "API Gateway should be ready")
 
 	// Give the system time to process messages
-	time.Sleep(2 * time.Second)
+	// Wait longer for messages to be processed through SSE
+	time.Sleep(3 * time.Second)
 
 	// Step 6: Verify data through API Gateway
 	t.Run("ListGPUs", func(t *testing.T) {

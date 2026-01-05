@@ -65,8 +65,9 @@ func (c *Collector) Start() error {
 		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	}
 
-	// Subscribe to queue
-	subChan, err := c.queue.Subscribe(c.ctx)
+	// Subscribe to queue with consumer ID
+	consumerID := c.config.InstanceID
+	subChan, err := c.queue.Subscribe(c.ctx, consumerID)
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to queue: %w", err)
 	}
@@ -143,7 +144,7 @@ func (c *Collector) processMessages(subChan <-chan *domain.Message) {
 	}
 }
 
-// processBatch processes a batch of messages
+// processBatch processes a batch of messages and sends ACKs
 func (c *Collector) processBatch(batch []*domain.Message) {
 	if len(batch) == 0 {
 		return
@@ -154,7 +155,10 @@ func (c *Collector) processBatch(batch []*domain.Message) {
 
 	// Track GPUs to save (deduplicate by UUID)
 	gpuMap := make(map[string]*domain.GPU)
+	consumerID := c.config.InstanceID
 
+	// Process messages and track which ones succeeded
+	processedMessages := make([]*domain.Message, 0, len(batch))
 	for _, msg := range batch {
 		if err := c.processMessage(ctx, msg, gpuMap); err != nil {
 			c.mu.Lock()
@@ -165,11 +169,13 @@ func (c *Collector) processBatch(batch []*domain.Message) {
 				"error", err,
 				"instance_id", c.config.InstanceID,
 				"message_id", msg.ID)
+			// Don't ACK failed messages - they should be retried
 		} else {
 			c.mu.Lock()
 			c.processedCount++
 			c.lastProcessedTime = time.Now()
 			c.mu.Unlock()
+			processedMessages = append(processedMessages, msg)
 		}
 	}
 
@@ -183,9 +189,21 @@ func (c *Collector) processBatch(batch []*domain.Message) {
 		}
 	}
 
+	// Send ACKs for successfully processed messages
+	for _, msg := range processedMessages {
+		if err := c.queue.Ack(ctx, msg.ID, consumerID); err != nil {
+			utils.Logger.Error("Failed to ACK message",
+				"error", err,
+				"instance_id", c.config.InstanceID,
+				"message_id", msg.ID)
+			// ACK failure doesn't affect processing count, but should be logged
+		}
+	}
+
 	utils.Logger.Debug("Processed batch",
 		"instance_id", c.config.InstanceID,
 		"batch_size", len(batch),
+		"processed", len(processedMessages),
 		"gpus_saved", len(gpuMap))
 }
 
@@ -210,13 +228,13 @@ func (c *Collector) processMessage(ctx context.Context, msg *domain.Message, gpu
 	// Extract GPU information from telemetry record
 	if record.GPUUUID != "" {
 		gpu := &domain.GPU{
-			UUID:     record.GPUUUID,
-			GPUID:    record.GPUID,
-			Device:   record.Device,
-			Model:    record.ModelName,
-			Hostname: record.Hostname,
+			UUID:      record.GPUUUID,
+			GPUID:     record.GPUID,
+			Device:    record.Device,
+			Model:     record.ModelName,
+			Hostname:  record.Hostname,
 			Container: record.Container,
-			Pod: record.Pod,
+			Pod:       record.Pod,
 			Namespace: record.Namespace,
 		}
 		// Only add if we don't already have this GPU (or update if we have more info)

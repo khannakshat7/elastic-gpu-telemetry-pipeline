@@ -19,7 +19,7 @@ func TestInMemoryMessageQueue_PublishSubscribe(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a subscriber
-	subChan, err := queue.Subscribe(ctx)
+	subChan, err := queue.Subscribe(ctx, "test-consumer-1")
 	require.NoError(t, err)
 
 	// Publish a message
@@ -50,7 +50,7 @@ func TestInMemoryMessageQueue_MultipleProducers(t *testing.T) {
 	defer queue.Close()
 
 	ctx := context.Background()
-	subChan, err := queue.Subscribe(ctx)
+	subChan, err := queue.Subscribe(ctx, "test-consumer-1")
 	require.NoError(t, err)
 
 	numProducers := 5
@@ -113,7 +113,7 @@ func TestInMemoryMessageQueue_MultipleConsumers(t *testing.T) {
 	// Create multiple subscribers
 	subChans := make([]<-chan *domain.Message, numConsumers)
 	for i := 0; i < numConsumers; i++ {
-		subChan, err := queue.Subscribe(ctx)
+		subChan, err := queue.Subscribe(ctx, "test-consumer-1")
 		require.NoError(t, err)
 		subChans[i] = subChan
 	}
@@ -131,22 +131,59 @@ func TestInMemoryMessageQueue_MultipleConsumers(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Each consumer should receive all messages (fan-out pattern)
+	// With work queue pattern (round-robin), each message goes to only one consumer
+	// So total messages received across all consumers should equal messagesToPublish
 	var wg sync.WaitGroup
 	wg.Add(numConsumers)
+
+	totalReceived := int64(0)
+	var mu sync.Mutex
 
 	for i, subChan := range subChans {
 		go func(consumerID int, ch <-chan *domain.Message) {
 			defer wg.Done()
 			received := 0
-			for msg := range ch {
-				require.NotNil(t, msg)
-				received++
-				if received == messagesToPublish {
+			// In work queue pattern, each consumer gets a subset of messages
+			// We need to read until we've received all messages (totalReceived == messagesToPublish)
+			for {
+				mu.Lock()
+				currentTotal := totalReceived
+				mu.Unlock()
+
+				// If we've received all messages, exit
+				if currentTotal >= int64(messagesToPublish) {
 					return
 				}
+
+				// Try to receive a message with timeout
+				select {
+				case msg, ok := <-ch:
+					if !ok {
+						// Channel closed
+						return
+					}
+					require.NotNil(t, msg)
+					received++
+					mu.Lock()
+					totalReceived++
+					currentTotal = totalReceived
+					mu.Unlock()
+
+					// If we've received all messages, exit
+					if currentTotal >= int64(messagesToPublish) {
+						return
+					}
+				case <-time.After(500 * time.Millisecond):
+					// Timeout - check if we're done
+					mu.Lock()
+					currentTotal = totalReceived
+					mu.Unlock()
+					if currentTotal >= int64(messagesToPublish) {
+						return
+					}
+					// Continue waiting
+				}
 			}
-			assert.Equal(t, messagesToPublish, received, "consumer %d should receive all messages", consumerID)
 		}(i, subChan)
 	}
 
@@ -159,9 +196,16 @@ func TestInMemoryMessageQueue_MultipleConsumers(t *testing.T) {
 
 	select {
 	case <-done:
-		// All consumers received messages
+		// Verify total messages received equals messages published (work queue pattern)
+		mu.Lock()
+		actualTotal := totalReceived
+		mu.Unlock()
+		assert.Equal(t, int64(messagesToPublish), actualTotal, "total messages received should equal messages published")
 	case <-time.After(1 * time.Second):
-		t.Fatal("timeout waiting for consumers to receive messages")
+		mu.Lock()
+		actualTotal := totalReceived
+		mu.Unlock()
+		t.Fatalf("timeout waiting for consumers to receive messages. Received: %d, Expected: %d", actualTotal, messagesToPublish)
 	}
 }
 
@@ -170,7 +214,7 @@ func TestInMemoryMessageQueue_ConcurrentPublishSubscribe(t *testing.T) {
 	defer queue.Close()
 
 	ctx := context.Background()
-	subChan, err := queue.Subscribe(ctx)
+	subChan, err := queue.Subscribe(ctx, "test-consumer-1")
 	require.NoError(t, err)
 
 	numProducers := 10
@@ -231,7 +275,7 @@ func TestInMemoryMessageQueue_GracefulShutdown(t *testing.T) {
 	numSubscribers := 3
 	subChans := make([]<-chan *domain.Message, numSubscribers)
 	for i := 0; i < numSubscribers; i++ {
-		subChan, err := queue.Subscribe(ctx)
+		subChan, err := queue.Subscribe(ctx, "test-consumer-1")
 		require.NoError(t, err)
 		subChans[i] = subChan
 	}
@@ -308,7 +352,7 @@ func TestInMemoryMessageQueue_SubscribeAfterClose(t *testing.T) {
 	queue.Close()
 
 	ctx := context.Background()
-	_, err := queue.Subscribe(ctx)
+	_, err := queue.Subscribe(ctx, "test-consumer-1")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "closed")
 }
@@ -330,7 +374,7 @@ func TestInMemoryMessageQueue_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Create a subscriber
-	subChan, err := queue.Subscribe(ctx)
+	subChan, err := queue.Subscribe(ctx, "test-consumer-1")
 	require.NoError(t, err)
 
 	// Cancel the context
@@ -353,11 +397,11 @@ func TestInMemoryMessageQueue_GetSubscriberCount(t *testing.T) {
 	assert.Equal(t, 0, queue.GetSubscriberCount())
 
 	// Add subscribers
-	_, err := queue.Subscribe(ctx)
+	_, err := queue.Subscribe(ctx, "test-consumer-1")
 	require.NoError(t, err)
 	assert.Equal(t, 1, queue.GetSubscriberCount())
 
-	_, err = queue.Subscribe(ctx)
+	_, err = queue.Subscribe(ctx, "test-consumer-2")
 	require.NoError(t, err)
 	assert.Equal(t, 2, queue.GetSubscriberCount())
 
@@ -371,7 +415,7 @@ func TestInMemoryMessageQueue_MessageOrdering(t *testing.T) {
 	defer queue.Close()
 
 	ctx := context.Background()
-	subChan, err := queue.Subscribe(ctx)
+	subChan, err := queue.Subscribe(ctx, "test-consumer-1")
 	require.NoError(t, err)
 
 	// Publish messages in order
@@ -403,4 +447,337 @@ func TestInMemoryMessageQueue_MessageOrdering(t *testing.T) {
 
 	// Verify order (messages should be received in the same order they were published)
 	assert.Equal(t, expectedOrder, receivedOrder)
+}
+
+func TestInMemoryMessageQueue_Ack_Success(t *testing.T) {
+	queue := NewInMemoryMessageQueue(100)
+	defer queue.Close()
+
+	ctx := context.Background()
+	subChan, err := queue.Subscribe(ctx, "test-consumer-1")
+	require.NoError(t, err)
+
+	// Publish a message
+	record := &domain.TelemetryRecord{
+		GPUUUID:       "GPU-123",
+		MetricName:    "DCGM_FI_DEV_GPU_UTIL",
+		Value:         "100",
+		IngestionTime: time.Now(),
+	}
+	msg := domain.NewMessage(record, "producer-1")
+	err = queue.Publish(ctx, msg)
+	require.NoError(t, err)
+
+	// Receive the message (this adds it to pending)
+	receivedMsg := <-subChan
+	require.NotNil(t, receivedMsg)
+
+	// ACK the message
+	err = queue.Ack(ctx, receivedMsg.ID, "test-consumer-1")
+	assert.NoError(t, err)
+
+	// Verify message is removed from pending
+	// Try to ACK again - should return nil (idempotent)
+	err = queue.Ack(ctx, receivedMsg.ID, "test-consumer-1")
+	assert.NoError(t, err) // Should be idempotent
+}
+
+func TestInMemoryMessageQueue_Ack_WrongConsumer(t *testing.T) {
+	queue := NewInMemoryMessageQueue(100)
+	defer queue.Close()
+
+	ctx := context.Background()
+	subChan, err := queue.Subscribe(ctx, "test-consumer-1")
+	require.NoError(t, err)
+
+	// Publish a message
+	record := &domain.TelemetryRecord{
+		GPUUUID:       "GPU-123",
+		MetricName:    "DCGM_FI_DEV_GPU_UTIL",
+		Value:         "100",
+		IngestionTime: time.Now(),
+	}
+	msg := domain.NewMessage(record, "producer-1")
+	err = queue.Publish(ctx, msg)
+	require.NoError(t, err)
+
+	// Receive the message
+	receivedMsg := <-subChan
+	require.NotNil(t, receivedMsg)
+
+	// Try to ACK with wrong consumer ID
+	err = queue.Ack(ctx, receivedMsg.ID, "wrong-consumer")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "delivered to consumer")
+}
+
+func TestInMemoryMessageQueue_Ack_NotPending(t *testing.T) {
+	queue := NewInMemoryMessageQueue(100)
+	defer queue.Close()
+
+	ctx := context.Background()
+
+	// Try to ACK a message that was never delivered (not in pending)
+	err := queue.Ack(ctx, "non-existent-message", "test-consumer-1")
+	// Should return nil (idempotent behavior for test scenarios)
+	assert.NoError(t, err)
+}
+
+func TestInMemoryMessageQueue_Distribute_NoSubscribers(t *testing.T) {
+	queue := NewInMemoryMessageQueue(100)
+	defer queue.Close()
+
+	ctx := context.Background()
+
+	// Publish messages before any subscribers
+	for i := 0; i < 10; i++ {
+		record := &domain.TelemetryRecord{
+			GPUUUID:       "GPU-123",
+			MetricName:    "DCGM_FI_DEV_GPU_UTIL",
+			Value:         fmt.Sprintf("%d", i),
+			IngestionTime: time.Now(),
+		}
+		msg := domain.NewMessage(record, "producer-1")
+		err := queue.Publish(ctx, msg)
+		require.NoError(t, err)
+	}
+
+	// Give time for messages to be processed (they should be lost since no subscribers)
+	time.Sleep(100 * time.Millisecond)
+
+	// Now subscribe - should not receive the previously published messages
+	subChan, err := queue.Subscribe(ctx, "test-consumer-1")
+	require.NoError(t, err)
+
+	// Publish a new message
+	record := &domain.TelemetryRecord{
+		GPUUUID:       "GPU-123",
+		MetricName:    "DCGM_FI_DEV_GPU_UTIL",
+		Value:         "100",
+		IngestionTime: time.Now(),
+	}
+	msg := domain.NewMessage(record, "producer-1")
+	err = queue.Publish(ctx, msg)
+	require.NoError(t, err)
+
+	// Should receive the new message
+	select {
+	case receivedMsg := <-subChan:
+		assert.NotNil(t, receivedMsg)
+		assert.Equal(t, msg.ID, receivedMsg.ID)
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timeout waiting for message")
+	}
+}
+
+func TestInMemoryMessageQueue_Distribute_ContextCancellation(t *testing.T) {
+	queue := NewInMemoryMessageQueue(100)
+	defer queue.Close()
+
+	// Create a subscriber with a cancellable context
+	ctx, cancel := context.WithCancel(context.Background())
+	subChan, err := queue.Subscribe(ctx, "test-consumer-1")
+	require.NoError(t, err)
+
+	// Cancel the context
+	cancel()
+
+	// Give time for cleanup
+	time.Sleep(50 * time.Millisecond)
+
+	// Publish a message - should not be delivered to cancelled subscriber
+	record := &domain.TelemetryRecord{
+		GPUUUID:       "GPU-123",
+		MetricName:    "DCGM_FI_DEV_GPU_UTIL",
+		Value:         "100",
+		IngestionTime: time.Now(),
+	}
+	msg := domain.NewMessage(record, "producer-1")
+	err = queue.Publish(context.Background(), msg)
+	require.NoError(t, err)
+
+	// Should not receive message (channel should be closed or context cancelled)
+	select {
+	case <-subChan:
+		// If we receive, it's OK (channel might not be closed yet)
+	case <-time.After(200 * time.Millisecond):
+		// Expected - channel should be closed or context cancelled
+	}
+}
+
+func TestInMemoryMessageQueue_Distribute_BlockingSend(t *testing.T) {
+	queue := NewInMemoryMessageQueue(100)
+	defer queue.Close()
+
+	ctx := context.Background()
+	subChan, err := queue.Subscribe(ctx, "test-consumer-1")
+	require.NoError(t, err)
+
+	// Publish multiple messages to test blocking send path
+	for i := 0; i < 5; i++ {
+		record := &domain.TelemetryRecord{
+			GPUUUID:       "GPU-123",
+			MetricName:    "DCGM_FI_DEV_GPU_UTIL",
+			Value:         fmt.Sprintf("%d", i),
+			IngestionTime: time.Now(),
+		}
+		msg := domain.NewMessage(record, "producer-1")
+		err := queue.Publish(ctx, msg)
+		require.NoError(t, err)
+	}
+
+	// Receive messages
+	received := 0
+	for i := 0; i < 5; i++ {
+		select {
+		case msg := <-subChan:
+			assert.NotNil(t, msg)
+			received++
+		case <-time.After(500 * time.Millisecond):
+			t.Fatalf("timeout waiting for message %d", i)
+		}
+	}
+
+	assert.Equal(t, 5, received)
+}
+
+func TestInMemoryMessageQueue_Distribute_RoundRobin_Multiple(t *testing.T) {
+	queue := NewInMemoryMessageQueue(100)
+	defer queue.Close()
+
+	ctx := context.Background()
+
+	// Create multiple subscribers
+	sub1, err := queue.Subscribe(ctx, "consumer-1")
+	require.NoError(t, err)
+	sub2, err := queue.Subscribe(ctx, "consumer-2")
+	require.NoError(t, err)
+	sub3, err := queue.Subscribe(ctx, "consumer-3")
+	require.NoError(t, err)
+
+	// Publish multiple messages
+	for i := 0; i < 6; i++ {
+		record := &domain.TelemetryRecord{
+			GPUUUID:       fmt.Sprintf("GPU-%d", i),
+			MetricName:    "DCGM_FI_DEV_GPU_UTIL",
+			Value:         "100",
+			IngestionTime: time.Now(),
+		}
+		msg := domain.NewMessage(record, "producer-1")
+		err := queue.Publish(ctx, msg)
+		require.NoError(t, err)
+	}
+
+	// Messages should be distributed round-robin
+	// Each subscriber should receive 2 messages
+	received1 := 0
+	received2 := 0
+	received3 := 0
+
+	timeout := time.After(2 * time.Second)
+	for received1+received2+received3 < 6 {
+		select {
+		case <-sub1:
+			received1++
+		case <-sub2:
+			received2++
+		case <-sub3:
+			received3++
+		case <-timeout:
+			t.Fatal("timeout waiting for messages")
+		}
+	}
+
+	// Verify round-robin distribution (each should get 2 messages)
+	assert.Equal(t, 2, received1)
+	assert.Equal(t, 2, received2)
+	assert.Equal(t, 2, received3)
+}
+
+func TestInMemoryMessageQueue_Distribute_SubscriberDisconnects(t *testing.T) {
+	queue := NewInMemoryMessageQueue(10)
+	defer queue.Close()
+
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	defer cancel1()
+
+	// Create a subscriber
+	_, err := queue.Subscribe(ctx1, "consumer-1")
+	require.NoError(t, err)
+
+	// Publish a message
+	record := &domain.TelemetryRecord{
+		GPUUUID:       "GPU-123",
+		MetricName:    "DCGM_FI_DEV_GPU_UTIL",
+		Value:         "100",
+		IngestionTime: time.Now(),
+	}
+	msg := domain.NewMessage(record, "producer-1")
+
+	err = queue.Publish(ctx1, msg)
+	require.NoError(t, err)
+
+	// Cancel subscriber context (simulates disconnection)
+	cancel1()
+
+	// Give distribute goroutine time to handle disconnection
+	time.Sleep(100 * time.Millisecond)
+
+	// Create new subscriber
+	ctx2 := context.Background()
+	sub2, err := queue.Subscribe(ctx2, "consumer-2")
+	require.NoError(t, err)
+
+	// Publish another message - should go to new subscriber
+	msg2 := domain.NewMessage(record, "producer-1")
+	err = queue.Publish(ctx2, msg2)
+	require.NoError(t, err)
+
+	// New subscriber should receive the message
+	select {
+	case received := <-sub2:
+		assert.Equal(t, msg2.ID, received.ID)
+	case <-time.After(1 * time.Second):
+		t.Fatal("timeout waiting for message")
+	}
+}
+
+func TestInMemoryMessageQueue_Distribute_IndexWrapAround(t *testing.T) {
+	queue := NewInMemoryMessageQueue(10)
+	defer queue.Close()
+
+	ctx := context.Background()
+
+	// Create subscribers
+	sub1, err := queue.Subscribe(ctx, "consumer-1")
+	require.NoError(t, err)
+	sub2, err := queue.Subscribe(ctx, "consumer-2")
+	require.NoError(t, err)
+
+	// Manually set index to test wrap-around
+	queue.mu.Lock()
+	queue.currentSubscriberIndex = 10 // Set beyond length
+	queue.mu.Unlock()
+
+	// Publish a message - should wrap around index
+	record := &domain.TelemetryRecord{
+		GPUUUID:       "GPU-123",
+		MetricName:    "DCGM_FI_DEV_GPU_UTIL",
+		Value:         "100",
+		IngestionTime: time.Now(),
+	}
+	msg := domain.NewMessage(record, "producer-1")
+
+	err = queue.Publish(ctx, msg)
+	require.NoError(t, err)
+
+	// Message should still be delivered (tests index wrap-around)
+	select {
+	case <-sub1:
+		// OK
+	case <-sub2:
+		// OK
+	case <-time.After(1 * time.Second):
+		t.Fatal("timeout waiting for message")
+	}
 }

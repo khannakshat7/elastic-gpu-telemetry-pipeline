@@ -1,6 +1,6 @@
 module github.com/khannakshat7/elastic-gpu-telemetry-pipeline
 
-go 1.24.0
+go 1.25
 
 require (
 	github.com/gin-gonic/gin v1.11.0
@@ -9,6 +9,8 @@ require (
 	github.com/swaggo/files v1.0.1
 	github.com/swaggo/gin-swagger v1.6.1
 )
+
+require github.com/lib/pq v1.10.9
 
 require (
 	github.com/KyleBanks/depth v1.2.1 // indirect

@@ -73,7 +73,7 @@ func TestStreamer_StreamLoop(t *testing.T) {
 
 	// Subscribe to queue
 	ctx := context.Background()
-	subChan, err := queue.Subscribe(ctx)
+	subChan, err := queue.Subscribe(ctx, "test-consumer-1")
 	require.NoError(t, err)
 
 	// Start streaming in background using Start() method
@@ -144,7 +144,7 @@ func TestStreamer_StreamLoop_MultipleIterations(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	subChan, err := queue.Subscribe(ctx)
+	subChan, err := queue.Subscribe(ctx, "test-consumer-1")
 	require.NoError(t, err)
 
 	// Start streaming with proper shutdown
@@ -240,7 +240,7 @@ func TestStreamer_MultipleInstances(t *testing.T) {
 	defer queue.Close()
 
 	ctx := context.Background()
-	subChan, err := queue.Subscribe(ctx)
+	subChan, err := queue.Subscribe(ctx, "test-consumer-1")
 	require.NoError(t, err)
 
 	// Create multiple streamer instances
@@ -324,4 +324,43 @@ func createTempCSV(t *testing.T, content string) *os.File {
 	})
 
 	return file
+}
+
+func TestStreamer_LoadCSV_FileNotFound(t *testing.T) {
+	cfg := &config.StreamerConfig{
+		CSVFilePath:    "/nonexistent/file.csv",
+		StreamInterval: 10 * time.Millisecond,
+		InstanceID:     "test-instance",
+	}
+
+	parser := telemetry.NewCSVParser()
+	queue := mq.NewInMemoryMessageQueue(100)
+	defer queue.Close()
+
+	str, err := NewStreamer(cfg, parser, queue)
+	require.NoError(t, err)
+
+	err = str.LoadCSV()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to open CSV file")
+}
+
+func TestStreamer_Start_NoRecordsLoaded(t *testing.T) {
+	cfg := &config.StreamerConfig{
+		CSVFilePath:    "/tmp/test.csv",
+		StreamInterval: 10 * time.Millisecond,
+		InstanceID:     "test-instance",
+	}
+
+	parser := telemetry.NewCSVParser()
+	queue := mq.NewInMemoryMessageQueue(100)
+	defer queue.Close()
+
+	str, err := NewStreamer(cfg, parser, queue)
+	require.NoError(t, err)
+
+	// Try to start without loading CSV
+	err = str.Start()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no records loaded")
 }

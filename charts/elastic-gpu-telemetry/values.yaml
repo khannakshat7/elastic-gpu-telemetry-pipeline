@@ -63,8 +63,14 @@ storageService:
   
   env:
     STORAGE_PORT: "8082"
-    STORAGE_BACKEND: "memory"
+    STORAGE_BACKEND: "postgres"
     STORAGE_URI: ""
+    POSTGRES_HOST: "postgres"
+    POSTGRES_PORT: "5432"
+    POSTGRES_USER: "postgres"
+    POSTGRES_PASSWORD: "postgres"
+    POSTGRES_DB: "gpu_telemetry"
+    POSTGRES_SSLMODE: "disable"
     LOG_LEVEL: "info"
 
 # Streamer Service Configuration
@@ -169,4 +175,37 @@ apiGateway:
           - path: /
             pathType: Prefix
     tls: []
+
+# PostgreSQL Configuration
+postgres:
+  enabled: true
+  name: postgres
+  image:
+    repository: postgres
+    tag: "15-alpine"
+    pullPolicy: IfNotPresent
+  
+  replicaCount: 1
+  
+  auth:
+    username: postgres
+    password: postgres
+    database: gpu_telemetry
+  
+  service:
+    type: ClusterIP
+    port: 5432
+  
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ""  # Use default storage class for kind
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
 

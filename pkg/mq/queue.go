@@ -15,10 +15,16 @@ type MessageQueue interface {
 	Publish(ctx context.Context, msg *domain.Message) error
 
 	// Subscribe returns a channel that receives messages from the queue.
-	// Each subscriber gets its own channel, enabling fan-out distribution.
+	// Messages are distributed using a work queue pattern (round-robin),
+	// ensuring each message is delivered to only one subscriber.
 	// The channel will be closed when the queue is shut down.
 	// Returns an error if the queue is closed or if subscription fails.
-	Subscribe(ctx context.Context) (<-chan *domain.Message, error)
+	Subscribe(ctx context.Context, consumerID string) (<-chan *domain.Message, error)
+
+	// Ack acknowledges that a message has been successfully processed.
+	// This prevents message loss and allows the queue to track delivery status.
+	// Returns an error if the message ID is invalid or if ACK fails.
+	Ack(ctx context.Context, messageID string, consumerID string) error
 
 	// Close gracefully shuts down the queue.
 	// It stops accepting new messages and closes all subscriber channels.

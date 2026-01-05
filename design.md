@@ -227,13 +227,15 @@ CSV File    Streamer      Queue        Collector     Storage      API Client
    │           │──publish──>│              │            │              │
    │           │  (JSON)    │              │            │              │
    │           │            │              │            │              │
-   │           │            │──consume────>│            │              │
-   │           │            │  (JSON)      │            │              │
+   │           │            │──push───────>│            │              │
+   │           │            │  (SSE)       │            │              │
    │           │            │              │            │              │
    │           │            │              │──parse────>│              │
    │           │            │              │            │              │
    │           │            │              │──persist──>│              │
    │           │            │              │            │              │
+   │           │            │<──ACK────────│            │              │
+   │           │            │  (POST)      │            │              │
    │           │            │              │            │              │
    │           │            │              │            │<──query──────│
    │           │            │              │            │              │
@@ -241,6 +243,12 @@ CSV File    Streamer      Queue        Collector     Storage      API Client
    │           │            │              │            │  (JSON)      │
    │           │            │              │            │              │
 ```
+
+**Key Changes from Previous Architecture:**
+- Queue **pushes** messages to collectors via SSE (no polling)
+- Each message delivered to **one collector** (work queue pattern, not fanout)
+- Collector sends **ACK** after successful processing
+- Queue tracks pending messages until ACKed (prevents message loss)
 
 ### Package/Module Layout
 
@@ -271,8 +279,12 @@ elastic-gpu-telemetry-pipeline/
 │   │
 │   ├── storage/           # Storage abstraction layer
 │   │   ├── interface.go  # Storage interface
+│   │   ├── factory.go     # Storage factory (creates backends)
 │   │   ├── memory/        # In-memory implementation
-│   │       └── store.go
+│   │   │   └── store.go
+│   │   └── postgres/      # PostgreSQL implementation
+│   │       ├── store.go   # PostgreSQL store with schema init
+│   │       └── errors.go  # PostgreSQL-specific errors
 │   │   
 │   │
 │   ├── telemetry/         # Telemetry processing
@@ -389,18 +401,20 @@ elastic-gpu-telemetry-pipeline/
   type JSONParser struct{}
   ```
 
-#### 4. Publisher-Subscriber Pattern
+#### 4. Work Queue Pattern
 **Location**: `pkg/mq/`
-- Queue service implements pub/sub pattern
+- Queue service implements work queue pattern (round-robin distribution)
 - Streamers are publishers
 - Collectors are subscribers
-- Decouples producers from consumers
+- Each message is delivered to only one collector (not fanout)
+- Decouples producers from consumers while ensuring load distribution
 
-#### 5. Observer Pattern
-**Location**: `pkg/mq/subscriber.go`
-- Collectors observe queue for new messages
-- Can have multiple observers (collectors) for same queue
-- Queue notifies all subscribers when messages arrive
+#### 5. Push-Based Delivery
+**Location**: `pkg/mq/server.go`, `pkg/mq/httpclient.go`
+- Queue service pushes messages to collectors via Server-Sent Events (SSE)
+- No polling required - queue actively delivers messages
+- Reduces latency and improves efficiency
+- Automatic reconnection on connection loss
 
 #### 6. Adapter Pattern
 **Location**: `pkg/storage/memory/`
@@ -426,9 +440,20 @@ elastic-gpu-telemetry-pipeline/
 - Each instance processes independently
 
 #### 2. Queue-Based Load Distribution
-- Queue service distributes messages across collector instances
-- Round-robin or work-stealing distribution
-- Each collector instance processes messages independently
+- Queue service distributes messages across collector instances using work queue pattern
+- Round-robin distribution ensures even load across collectors
+- Each message is delivered to only one collector (no duplication)
+- ACK mechanism ensures messages are not lost if collector fails
+- Pending messages tracked until ACKed
+- Failed messages (not ACKed) can be redelivered (future enhancement)
+
+#### 2a. Message Acknowledgment (ACK) Mechanism
+**Location**: `pkg/mq/inmemory.go`, `pkg/mq/server.go`, `internal/collector/collector.go`
+- Messages are tracked as "pending" when delivered to a collector
+- Collector must send ACK after successful processing
+- ACK removes message from pending list
+- Prevents message loss if collector crashes before processing
+- Future: Un-ACKed messages can be redelivered after timeout
 
 #### 3. Concurrent Processing
 - Streamers use goroutines for concurrent CSV reading
@@ -463,6 +488,38 @@ elastic-gpu-telemetry-pipeline/
 
 ### Storage Backend Abstraction
 
+#### PostgreSQL Implementation
+
+**Location**: `pkg/storage/postgres/`
+
+The PostgreSQL storage backend provides:
+- **Automatic Schema Initialization**: Creates tables and indexes on first connection
+- **Connection Management**: Proper connection pooling and cleanup
+- **Transaction Support**: Uses database transactions for data integrity
+- **Indexed Queries**: Optimized indexes for GPU UUID and time-based queries
+- **Foreign Key Constraints**: Ensures referential integrity between GPUs and telemetry
+
+**Database Schema**:
+- `gpus` table: Stores GPU entities with UUID as primary key
+- `telemetry` table: Stores telemetry records with composite unique key (gpu_uuid, metric_name, ingestion_time)
+- Indexes: Created automatically for efficient queries
+
+**Configuration**:
+- Connection string format: `host=... port=... user=... password=... dbname=... sslmode=...`
+- Environment variables: `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_SSLMODE`
+- Default backend: PostgreSQL (can be switched to memory for development)
+
+#### In-Memory Implementation
+
+**Location**: `pkg/storage/memory/`
+
+The in-memory storage backend provides:
+- Fast, thread-safe in-memory storage
+- Useful for development and testing
+- No persistence (data lost on restart)
+
+### Storage Backend Abstraction (Legacy)
+
 #### Interface-Based Design
 ```go
 // pkg/storage/interface.go
@@ -478,21 +535,28 @@ type Repository interface {
 }
 ```
 
-#### Current Implementation: In-Memory
+#### Implementations
+
+**PostgreSQL (Default/Production)**:
+- **Location**: `pkg/storage/postgres/`
+- Persistent storage with automatic schema initialization
+- Indexed queries for optimal performance
+- Foreign key constraints for data integrity
+- Connection pooling and proper resource management
+- Used by default in Kubernetes deployments
+
+**In-Memory (Development/Testing)**:
+- **Location**: `pkg/storage/memory/`
 - Fast for development/testing
 - Simple key-value store (map-based)
 - No persistence (data lost on restart)
+- Useful for local development without database setup
 
-#### Future Implementation: Postgres
-- Horizontal scaling support
-- Persistent storage
-- Indexed queries for performance
-
-#### Migration Path
-1. Start with in-memory storage
-2. Implement postgres adapter implementing same interface
-3. Switch via configuration/environment variable
-4. No code changes in Streamer/Collector/API Gateway
+#### Backend Selection
+- Configured via `STORAGE_BACKEND` environment variable
+- Default: `"postgres"` (production)
+- Alternative: `"memory"` (development)
+- No code changes needed in Streamer/Collector/API Gateway when switching backends
 
 ### Observability & Logging
 
@@ -545,10 +609,12 @@ type Repository interface {
   ```
 
 ### Queue → Collector
-- **Protocol**: HTTP REST or gRPC
-- **Method**: GET /api/v1/messages (polling) or WebSocket (push)
-- **Response**: Array of messages
-- **Acknowledgment**: POST /api/v1/messages/ack
+- **Protocol**: HTTP REST with Server-Sent Events (SSE)
+- **Method**: GET /api/v1/messages?consumer_id=<id> (push-based SSE stream)
+- **Delivery Pattern**: Work queue (round-robin) - each message delivered to one collector
+- **Response**: SSE stream with message events
+- **Acknowledgment**: POST /api/v1/messages/:id/ack (required after processing)
+- **Message Loss Prevention**: Messages tracked as pending until ACKed
 
 ### Collector → Storage
 - **Interface**: `pkg/storage.Repository`
@@ -564,8 +630,14 @@ type Repository interface {
 
 ### Environment Variables
 - `QUEUE_SERVICE_URL` - Queue service endpoint
-- `STORAGE_BACKEND` - "memory" or "postgres"
-- `STORAGE_URI` - Storage connection string
+- `STORAGE_BACKEND` - "postgres" (default) or "memory"
+- `STORAGE_URI` - Storage connection string (optional, for non-PostgreSQL backends)
+- `POSTGRES_HOST` - PostgreSQL hostname (default: "postgres" in K8s, "localhost" locally)
+- `POSTGRES_PORT` - PostgreSQL port (default: "5432")
+- `POSTGRES_USER` - PostgreSQL username (default: "postgres")
+- `POSTGRES_PASSWORD` - PostgreSQL password (default: "postgres")
+- `POSTGRES_DB` - PostgreSQL database name (default: "gpu_telemetry")
+- `POSTGRES_SSLMODE` - PostgreSQL SSL mode (default: "disable" for local/kind)
 - `CSV_FILE_PATH` - Path to CSV file
 - `LOG_LEVEL` - Logging level
 - `API_PORT` - API Gateway port

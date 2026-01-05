@@ -18,6 +18,12 @@ spec:
         {{- include "elastic-gpu-telemetry.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: storage-service
     spec:
+      {{- if and .Values.postgres.enabled (eq .Values.storageService.env.STORAGE_BACKEND "postgres") }}
+      initContainers:
+      - name: wait-for-postgres
+        image: busybox:1.36
+        command: ['sh', '-c', 'until nc -z {{ .Values.postgres.name }} {{ .Values.postgres.service.port }}; do echo waiting for postgres; sleep 2; done;']
+      {{- end }}
       containers:
       - name: storage-service
         image: {{ include "elastic-gpu-telemetry.image" (dict "Values" .Values "image" .Values.storageService.image "global" .Values.global) }}

@@ -2,12 +2,15 @@ package collector
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/khannakshat7/elastic-gpu-telemetry-pipeline/pkg/config"
 	"github.com/khannakshat7/elastic-gpu-telemetry-pipeline/pkg/domain"
 	"github.com/khannakshat7/elastic-gpu-telemetry-pipeline/pkg/mq"
+	"github.com/khannakshat7/elastic-gpu-telemetry-pipeline/pkg/storage"
 	"github.com/khannakshat7/elastic-gpu-telemetry-pipeline/pkg/storage/memory"
 	"github.com/khannakshat7/elastic-gpu-telemetry-pipeline/pkg/utils"
 	"github.com/stretchr/testify/assert"
@@ -232,7 +235,8 @@ func TestCollector_ProcessMessages(t *testing.T) {
 	ctx := context.Background()
 
 	// Subscribe to queue (collector will do this, but we need it for testing)
-	subChan, err := queue.Subscribe(ctx)
+	// Use the collector's instance ID as consumer ID to match ACK requirements
+	subChan, err := queue.Subscribe(ctx, cfg.InstanceID)
 	require.NoError(t, err)
 
 	// Publish messages
@@ -301,10 +305,12 @@ func TestCollector_MultipleInstances(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Subscribe each collector
+	// Subscribe each collector with their own consumer ID
 	subChans := make([]<-chan *domain.Message, numCollectors)
 	for i, col := range collectors {
-		subChan, err := queue.Subscribe(ctx)
+		// Use the collector's instance ID as consumer ID
+		consumerID := col.config.InstanceID
+		subChan, err := queue.Subscribe(ctx, consumerID)
 		require.NoError(t, err)
 		subChans[i] = subChan
 
@@ -330,19 +336,19 @@ func TestCollector_MultipleInstances(t *testing.T) {
 	}
 
 	// Wait for processing
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	// Stop all collectors
 	for _, col := range collectors {
 		col.Stop()
 	}
 
-	// Verify messages were processed (fan-out means all collectors get all messages)
-	// So we should have numMessages * numCollectors total records
+	// Verify messages were processed (work queue pattern means each message goes to one collector)
+	// So we should have exactly numMessages total records (distributed across collectors)
 	telemetry, err := repository.GetTelemetryByGPU(ctx, "GPU-123", nil, nil)
 	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(telemetry), numMessages*numCollectors,
-		"each collector should process all messages (fan-out pattern)")
+	assert.Equal(t, numMessages, len(telemetry),
+		"work queue pattern: each message should be processed exactly once")
 }
 
 func TestCollector_Stats(t *testing.T) {
@@ -396,6 +402,117 @@ func TestCollector_Stats(t *testing.T) {
 	assert.False(t, lastProcessed.IsZero())
 }
 
+func TestCollector_ProcessMessages_ChannelClosed(t *testing.T) {
+	queue := mq.NewInMemoryMessageQueue(100)
+	defer queue.Close()
+	repository, _ := storage.NewRepository(storage.BackendMemory, nil)
+
+	cfg := &config.CollectorConfig{
+		InstanceID: "test-collector",
+		BatchSize:  10,
+	}
+
+	collector, err := NewCollector(cfg, queue, repository)
+	require.NoError(t, err)
+
+	// Set up WaitGroup properly (processMessages expects this)
+	collector.wg.Add(1)
+
+	// Create a channel and close it to simulate channel closure
+	msgChan := make(chan *domain.Message, 1)
+	close(msgChan)
+
+	// Start processing in a goroutine
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		collector.processMessages(msgChan)
+	}()
+
+	// Wait for processing to complete
+	wg.Wait()
+	// Should complete without error when channel is closed
+}
+
+func TestCollector_ProcessMessages_ContextCancelled(t *testing.T) {
+	queue := mq.NewInMemoryMessageQueue(100)
+	defer queue.Close()
+	repository, _ := storage.NewRepository(storage.BackendMemory, nil)
+
+	cfg := &config.CollectorConfig{
+		InstanceID: "test-collector",
+		BatchSize:  10,
+	}
+
+	collector, err := NewCollector(cfg, queue, repository)
+	require.NoError(t, err)
+
+	// Set up WaitGroup properly (processMessages expects this)
+	collector.wg.Add(1)
+
+	// Create a channel that will block
+	msgChan := make(chan *domain.Message)
+
+	// Start processing in a goroutine
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		collector.processMessages(msgChan)
+	}()
+
+	// Cancel context
+	collector.cancel()
+
+	// Wait for processing to complete
+	wg.Wait()
+	// Should complete when context is cancelled
+}
+
+func TestCollector_ProcessMessages_RemainingBatch(t *testing.T) {
+	queue := mq.NewInMemoryMessageQueue(100)
+	defer queue.Close()
+	repository, _ := storage.NewRepository(storage.BackendMemory, nil)
+
+	cfg := &config.CollectorConfig{
+		InstanceID: "test-collector",
+		BatchSize:  5, // Small batch size
+	}
+
+	collector, err := NewCollector(cfg, queue, repository)
+	require.NoError(t, err)
+
+	// Set up WaitGroup properly (processMessages expects this)
+	collector.wg.Add(1)
+
+	// Create a channel and send some messages
+	msgChan := make(chan *domain.Message, 3)
+	for i := 0; i < 3; i++ {
+		record := &domain.TelemetryRecord{
+			GPUUUID:       fmt.Sprintf("GPU-%d", i),
+			MetricName:    "DCGM_FI_DEV_GPU_UTIL",
+			Value:         "100",
+			IngestionTime: time.Now(),
+		}
+		msg := domain.NewMessage(record, "producer-1")
+		msgChan <- msg
+	}
+	close(msgChan)
+
+	// Start processing
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		collector.processMessages(msgChan)
+	}()
+
+	// Wait for processing to complete
+	wg.Wait()
+	// Should process remaining batch when channel closes
+}
+
 func TestCollector_GPUDeduplication(t *testing.T) {
 	cfg := &config.CollectorConfig{
 		InstanceID: "test-collector",
@@ -446,4 +563,90 @@ func TestCollector_GPUDeduplication(t *testing.T) {
 	assert.Equal(t, "GPU-123", gpu.UUID)
 	assert.Equal(t, "host-1", gpu.Hostname)
 	assert.Equal(t, "NVIDIA H100", gpu.Model)
+}
+
+func TestNewCollector_NilQueue(t *testing.T) {
+	cfg := &config.CollectorConfig{
+		InstanceID: "test-collector",
+		BatchSize:  1,
+	}
+
+	repository := memory.NewStore()
+
+	col, err := NewCollector(cfg, nil, repository)
+	assert.Error(t, err)
+	assert.Nil(t, col)
+	assert.Contains(t, err.Error(), "queue cannot be nil")
+}
+
+func TestNewCollector_NilRepository(t *testing.T) {
+	cfg := &config.CollectorConfig{
+		InstanceID: "test-collector",
+		BatchSize:  1,
+	}
+
+	queue := mq.NewInMemoryMessageQueue(100)
+	defer queue.Close()
+
+	col, err := NewCollector(cfg, queue, nil)
+	assert.Error(t, err)
+	assert.Nil(t, col)
+	assert.Contains(t, err.Error(), "repository cannot be nil")
+}
+
+func TestCollector_ProcessBatch_EmptyBatch(t *testing.T) {
+	cfg := &config.CollectorConfig{
+		InstanceID: "test-collector",
+		BatchSize:  5,
+	}
+
+	queue := mq.NewInMemoryMessageQueue(100)
+	defer queue.Close()
+
+	repository := memory.NewStore()
+
+	col, err := NewCollector(cfg, queue, repository)
+	require.NoError(t, err)
+
+	// Process empty batch
+	batch := []*domain.Message{}
+	col.processBatch(batch) // Empty batch should not error
+}
+
+func TestCollector_ProcessBatch_PartialBatch(t *testing.T) {
+	cfg := &config.CollectorConfig{
+		InstanceID: "test-collector",
+		BatchSize:  5,
+	}
+
+	queue := mq.NewInMemoryMessageQueue(100)
+	defer queue.Close()
+
+	repository := memory.NewStore()
+
+	col, err := NewCollector(cfg, queue, repository)
+	require.NoError(t, err)
+
+	// Process partial batch (less than batch size)
+	batch := []*domain.Message{
+		domain.NewMessage(&domain.TelemetryRecord{
+			GPUUUID:       "GPU-123",
+			MetricName:    "DCGM_FI_DEV_GPU_UTIL",
+			Value:         "100",
+			IngestionTime: time.Now(),
+		}, "producer-1"),
+		domain.NewMessage(&domain.TelemetryRecord{
+			GPUUUID:       "GPU-456",
+			MetricName:    "DCGM_FI_DEV_GPU_UTIL",
+			Value:         "50",
+			IngestionTime: time.Now(),
+		}, "producer-1"),
+	}
+
+	col.processBatch(batch)
+
+	// Verify data was saved
+	gpus, err := repository.ListGPUs(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 2, len(gpus))
 }

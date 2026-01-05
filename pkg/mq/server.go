@@ -96,7 +96,8 @@ func (s *Server) setupRoutes(router *gin.Engine) {
 
 		// Queue operations
 		api.POST("/messages", s.publishMessage)
-		api.GET("/messages", s.subscribeMessages) // Polling-based subscription
+		api.GET("/messages", s.subscribeMessages)   // Push-based subscription (SSE)
+		api.POST("/messages/:id/ack", s.ackMessage) // ACK endpoint
 		api.GET("/stats", s.getStats)
 	}
 }
@@ -131,50 +132,101 @@ func (s *Server) publishMessage(c *gin.Context) {
 	})
 }
 
-// subscribeMessages handles GET /api/v1/messages (polling-based)
+// subscribeMessages handles GET /api/v1/messages (push-based using Server-Sent Events)
 func (s *Server) subscribeMessages(c *gin.Context) {
 	ctx := c.Request.Context()
 
+	// Get consumer ID from query parameter (required)
+	consumerID := c.Query("consumer_id")
+	if consumerID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "consumer_id query parameter is required"})
+		return
+	}
+
 	// Subscribe to queue
-	subChan, err := s.queue.Subscribe(ctx)
+	subChan, err := s.queue.Subscribe(ctx, consumerID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Get timeout from query parameter (default 5 seconds)
-	timeout := 5 * time.Second
-	if timeoutStr := c.Query("timeout"); timeoutStr != "" {
-		if t, err := time.ParseDuration(timeoutStr); err == nil {
-			timeout = t
-		}
-	}
+	// Set up Server-Sent Events (SSE)
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no") // Disable nginx buffering
 
-	// Wait for a message with timeout
-	select {
-	case msg, ok := <-subChan:
-		if !ok {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "queue is closed"})
+	// Send initial connection message
+	c.SSEvent("connected", gin.H{
+		"consumer_id": consumerID,
+		"timestamp":   time.Now(),
+	})
+	c.Writer.Flush()
+
+	// Stream messages as they arrive
+	for {
+		select {
+		case msg, ok := <-subChan:
+			if !ok {
+				// Channel closed, send close event
+				c.SSEvent("closed", gin.H{"message": "queue is closed"})
+				c.Writer.Flush()
+				return
+			}
+			// Send message as SSE event
+			c.SSEvent("message", msg)
+			c.Writer.Flush()
+
+		case <-ctx.Done():
+			// Client disconnected
 			return
 		}
-		c.JSON(http.StatusOK, msg)
-	case <-time.After(timeout):
-		c.JSON(http.StatusRequestTimeout, gin.H{
-			"status":  "timeout",
-			"message": "no messages available",
-		})
-	case <-ctx.Done():
-		c.JSON(http.StatusRequestTimeout, gin.H{"error": "request cancelled"})
 	}
+}
+
+// ackMessage handles POST /api/v1/messages/:id/ack
+func (s *Server) ackMessage(c *gin.Context) {
+	messageID := c.Param("id")
+	if messageID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "message ID is required"})
+		return
+	}
+
+	// Get consumer ID from request body or query parameter
+	var ackRequest struct {
+		ConsumerID string `json:"consumer_id" form:"consumer_id"`
+	}
+	if err := c.ShouldBindJSON(&ackRequest); err != nil {
+		// Try query parameter as fallback
+		ackRequest.ConsumerID = c.Query("consumer_id")
+	}
+
+	if ackRequest.ConsumerID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "consumer_id is required"})
+		return
+	}
+
+	ctx := c.Request.Context()
+	if err := s.queue.Ack(ctx, messageID, ackRequest.ConsumerID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":     "acknowledged",
+		"message_id": messageID,
+	})
 }
 
 // getStats handles GET /api/v1/stats
 func (s *Server) getStats(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"subscribers": s.queue.GetSubscriberCount(),
-		"closed":      s.queue.IsClosed(),
-		"timestamp":   time.Now(),
-	})
+	stats := gin.H{
+		"subscribers":      s.queue.GetSubscriberCount(),
+		"pending_messages": s.queue.GetPendingMessageCount(),
+		"closed":           s.queue.IsClosed(),
+		"timestamp":        time.Now(),
+	}
+	c.JSON(http.StatusOK, stats)
 }
 
 // isTestEnvironment checks if we're running in a test environment

@@ -72,3 +72,13 @@ For optimal query performance:
 - **Secondary Index**: `IngestionTime` (for time range queries)
 - **Composite Index**: `(GPUUUID, IngestionTime)` (for combined queries)
 
+### PostgreSQL Implementation
+
+The PostgreSQL storage backend automatically creates the following indexes:
+- `idx_telemetry_gpu_uuid` - Index on `gpu_uuid` column
+- `idx_telemetry_ingestion_time` - Index on `ingestion_time` column
+- `idx_telemetry_gpu_time` - Composite index on `(gpu_uuid, ingestion_time)`
+- `idx_gpus_hostname` - Index on `hostname` column for GPU queries
+
+These indexes are created automatically when the PostgreSQL store is initialized, ensuring optimal query performance for common access patterns.
+

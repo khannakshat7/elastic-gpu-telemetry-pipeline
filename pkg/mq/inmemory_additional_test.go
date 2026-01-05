@@ -7,6 +7,7 @@ import (
 
 	"github.com/khannakshat7/elastic-gpu-telemetry-pipeline/pkg/domain"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestInMemoryMessageQueue_Publish_ContextCancellation(t *testing.T) {
@@ -34,7 +35,7 @@ func TestInMemoryMessageQueue_Subscribe_ContextCancellationCleanup(t *testing.T)
 
 	// Create subscription with context
 	ctx, cancel := context.WithCancel(context.Background())
-	subChan, err := queue.Subscribe(ctx)
+	subChan, err := queue.Subscribe(ctx, "test-consumer-1")
 	assert.NoError(t, err)
 
 	// Verify subscriber was added
@@ -80,11 +81,9 @@ func TestInMemoryMessageQueue_Distribute_FullChannel(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Create subscriber with very small buffer (1)
-	subChan := make(chan *domain.Message, 1)
-	queue.mu.Lock()
-	queue.subscribers[subChan] = struct{}{}
-	queue.mu.Unlock()
+	// Create subscriber with very small buffer (1) using Subscribe method
+	subChan, err := queue.Subscribe(ctx, "test-consumer-full-channel")
+	require.NoError(t, err)
 
 	// Publish multiple messages to fill subscriber channel
 	msg1 := domain.NewMessage(&domain.TelemetryRecord{GPUUUID: "GPU-1"}, "producer")

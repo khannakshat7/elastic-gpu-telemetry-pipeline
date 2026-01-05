@@ -183,3 +183,149 @@ func TestHTTPRepository_GetTelemetryByGPU_WithTimeRange(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, records, 1)
 }
+
+func TestHTTPRepository_ListGPUs_ErrorResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("internal server error"))
+	}))
+	defer server.Close()
+
+	repo := NewHTTPRepository(server.URL)
+	gpus, err := repo.ListGPUs(context.Background())
+	assert.Error(t, err)
+	assert.Nil(t, gpus)
+	assert.Contains(t, err.Error(), "storage service returned error")
+}
+
+func TestHTTPRepository_ListGPUs_InvalidJSON_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("invalid json"))
+	}))
+	defer server.Close()
+
+	repo := NewHTTPRepository(server.URL)
+	gpus, err := repo.ListGPUs(context.Background())
+	assert.Error(t, err)
+	assert.Nil(t, gpus)
+	assert.Contains(t, err.Error(), "failed to decode")
+}
+
+func TestHTTPRepository_GetGPU_ErrorResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("internal server error"))
+	}))
+	defer server.Close()
+
+	repo := NewHTTPRepository(server.URL)
+	gpu, err := repo.GetGPU(context.Background(), "GPU-123")
+	assert.Error(t, err)
+	assert.Nil(t, gpu)
+	assert.Contains(t, err.Error(), "storage service returned error")
+}
+
+func TestHTTPRepository_GetGPU_InvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("invalid json"))
+	}))
+	defer server.Close()
+
+	repo := NewHTTPRepository(server.URL)
+	gpu, err := repo.GetGPU(context.Background(), "GPU-123")
+	assert.Error(t, err)
+	assert.Nil(t, gpu)
+	assert.Contains(t, err.Error(), "failed to decode")
+}
+
+func TestHTTPRepository_SaveGPU_ErrorResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("internal server error"))
+	}))
+	defer server.Close()
+
+	repo := NewHTTPRepository(server.URL)
+	gpu := &domain.GPU{
+		UUID:     "GPU-123",
+		GPUID:    "0",
+		Device:   "nvidia0",
+		Model:    "NVIDIA H100 80GB HBM3",
+		Hostname: "host-1",
+	}
+
+	err := repo.SaveGPU(context.Background(), gpu)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "storage service returned error")
+}
+
+func TestHTTPRepository_SaveTelemetry_ErrorResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("internal server error"))
+	}))
+	defer server.Close()
+
+	repo := NewHTTPRepository(server.URL)
+	record := &domain.TelemetryRecord{
+		GPUUUID:       "GPU-123",
+		MetricName:    "DCGM_FI_DEV_GPU_UTIL",
+		Value:         "100",
+		IngestionTime: time.Now(),
+	}
+
+	err := repo.SaveTelemetry(context.Background(), record)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "storage service returned error")
+}
+
+func TestHTTPRepository_GetTelemetryByGPU_ErrorResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("internal server error"))
+	}))
+	defer server.Close()
+
+	repo := NewHTTPRepository(server.URL)
+	records, err := repo.GetTelemetryByGPU(context.Background(), "GPU-123", nil, nil)
+	assert.Error(t, err)
+	assert.Nil(t, records)
+	assert.Contains(t, err.Error(), "storage service returned error")
+}
+
+func TestHTTPRepository_GetTelemetryByGPU_InvalidJSON_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("invalid json"))
+	}))
+	defer server.Close()
+
+	repo := NewHTTPRepository(server.URL)
+	records, err := repo.GetTelemetryByGPU(context.Background(), "GPU-123", nil, nil)
+	assert.Error(t, err)
+	assert.Nil(t, records)
+	assert.Contains(t, err.Error(), "failed to decode")
+}
+
+func TestHTTPRepository_ConnectionError(t *testing.T) {
+	// Use an invalid URL that will fail to connect
+	repo := NewHTTPRepository("http://localhost:99999")
+
+	// All operations should fail with connection errors
+	_, err := repo.ListGPUs(context.Background())
+	assert.Error(t, err)
+
+	_, err = repo.GetGPU(context.Background(), "GPU-123")
+	assert.Error(t, err)
+
+	err = repo.SaveGPU(context.Background(), &domain.GPU{UUID: "GPU-123"})
+	assert.Error(t, err)
+
+	err = repo.SaveTelemetry(context.Background(), &domain.TelemetryRecord{GPUUUID: "GPU-123"})
+	assert.Error(t, err)
+
+	_, err = repo.GetTelemetryByGPU(context.Background(), "GPU-123", nil, nil)
+	assert.Error(t, err)
+}

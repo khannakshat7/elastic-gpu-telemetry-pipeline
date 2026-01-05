@@ -68,8 +68,9 @@ func TestServer_subscribeMessages_QueueError(t *testing.T) {
 	router := gin.New()
 	server.setupRoutes(router)
 
-	// Try to subscribe when queue is closed
-	req := httptest.NewRequest("GET", "/api/v1/messages?timeout=100ms", nil)
+	// Try to subscribe when queue is closed (SSE requires consumer_id)
+	req := httptest.NewRequest("GET", "/api/v1/messages?consumer_id=test-consumer", nil)
+	req.Header.Set("Accept", "text/event-stream")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
