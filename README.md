@@ -197,34 +197,35 @@ This creates binaries in the `bin/` directory:
 
 #### Step 2: Start Services in Separate Terminals
 
-**Terminal 1 - Queue Service:**
+**Terminal 1 - Storage Service:**
+```bash
+make run-storage
+# Or: go run ./cmd/storage-service
+```
+This service provides shared storage that both Collector and API Gateway will use.
+
+**Terminal 2 - Queue Service:**
 ```bash
 make run-queue
 # Or: go run ./cmd/queue-service
 ```
 
-**Terminal 2 - Storage Service:**
+**Terminal 3 - Collector (connects to both Queue and Storage):**
 ```bash
-make run-storage
-# Or: go run ./cmd/storage-service
-```
-
-**Terminal 3 - Collector:**
-```bash
-make run-collector
-# Or: go run ./cmd/collector
+QUEUE_SERVICE_URL=http://localhost:8080 STORAGE_SERVICE_URL=http://localhost:8082 make run-collector
+# Or: QUEUE_SERVICE_URL=http://localhost:8080 STORAGE_SERVICE_URL=http://localhost:8082 go run ./cmd/collector
 ```
 
 **Terminal 4 - Streamer:**
 ```bash
-make run-streamer
-# Or: go run ./cmd/streamer
+QUEUE_SERVICE_URL=http://localhost:8080 make run-streamer
+# Or: QUEUE_SERVICE_URL=http://localhost:8080 go run ./cmd/streamer
 ```
 
-**Terminal 5 - API Gateway:**
+**Terminal 5 - API Gateway (connects to Storage):**
 ```bash
-make run-api
-# Or: go run ./cmd/api-gateway
+STORAGE_SERVICE_URL=http://localhost:8082 make run-api
+# Or: STORAGE_SERVICE_URL=http://localhost:8082 go run ./cmd/api-gateway
 ```
 
 #### Step 3: Access the API
@@ -658,11 +659,11 @@ make port-forward-bg-local
 
 2. **Start services** (in separate terminals):
    ```bash
-   make run-queue      # Terminal 1
-   make run-storage    # Terminal 2
-   make run-collector  # Terminal 3
-   make run-streamer   # Terminal 4
-   make run-api        # Terminal 5
+   make run-storage    # Terminal 1
+   make run-queue      # Terminal 2
+   QUEUE_SERVICE_URL=http://localhost:8080 STORAGE_SERVICE_URL=http://localhost:8082 make run-collector  # Terminal 3
+   QUEUE_SERVICE_URL=http://localhost:8080 make run-streamer   # Terminal 4
+   STORAGE_SERVICE_URL=http://localhost:8082 make run-api        # Terminal 5
    ```
 
 3. **Generate API documentation:**
