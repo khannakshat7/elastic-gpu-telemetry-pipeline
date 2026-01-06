@@ -701,7 +701,7 @@ make port-forward-bg-local
 
 ## 🤖 AI Assistance
 
-This project utilized AI assistance for several key improvements and features:
+This project utilized AI assistance for several key improvements and features. For a comprehensive overview of how AI was used throughout the development process, see [AI_CONTRIBUTIONS.md](AI_CONTRIBUTIONS.md).
 
 ### 1. **System/End-to-End Test Development**
    - Created comprehensive end-to-end test suite (`tests/system/e2e_test.go`)
