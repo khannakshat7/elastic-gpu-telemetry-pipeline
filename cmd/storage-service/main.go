@@ -89,6 +89,8 @@ func main() {
 		// GET /api/v1/storage/gpus/:uuid - Get specific GPU
 		api.GET("/gpus/:uuid", func(c *gin.Context) {
 			uuid := c.Param("uuid")
+			// Note: Gin automatically unescapes path parameters, but we should validate
+			// The UUID is already validated by the router, but we keep it for safety
 			gpu, err := repository.GetGPU(c.Request.Context(), uuid)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -132,19 +134,24 @@ func main() {
 		// GET /api/v1/storage/gpus/:uuid/telemetry - Get telemetry for GPU
 		api.GET("/gpus/:uuid/telemetry", func(c *gin.Context) {
 			uuid := c.Param("uuid")
+			// Note: Gin automatically unescapes path parameters
 			var startTime, endTime *time.Time
 
 			if startStr := c.Query("start_time"); startStr != "" {
 				t, err := time.Parse(time.RFC3339, startStr)
-				if err == nil {
-					startTime = &t
+				if err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid start_time format: %v", err)})
+					return
 				}
+				startTime = &t
 			}
 			if endStr := c.Query("end_time"); endStr != "" {
 				t, err := time.Parse(time.RFC3339, endStr)
-				if err == nil {
-					endTime = &t
+				if err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid end_time format: %v", err)})
+					return
 				}
+				endTime = &t
 			}
 
 			records, err := repository.GetTelemetryByGPU(c.Request.Context(), uuid, startTime, endTime)

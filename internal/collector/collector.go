@@ -157,6 +157,38 @@ func (c *Collector) processBatch(batch []*domain.Message) {
 	gpuMap := make(map[string]*domain.GPU)
 	consumerID := c.config.InstanceID
 
+	// First pass: collect all GPUs from messages
+	for _, msg := range batch {
+		if msg != nil && msg.Payload != nil && msg.Payload.GPUUUID != "" {
+			gpu := &domain.GPU{
+				UUID:      msg.Payload.GPUUUID,
+				GPUID:     msg.Payload.GPUID,
+				Device:    msg.Payload.Device,
+				Model:     msg.Payload.ModelName,
+				Hostname:  msg.Payload.Hostname,
+				Container: msg.Payload.Container,
+				Pod:       msg.Payload.Pod,
+				Namespace: msg.Payload.Namespace,
+			}
+			// Only add if we don't already have this GPU (or update if we have more info)
+			if existing, exists := gpuMap[gpu.UUID]; !exists || (gpu.Model != "" && existing.Model == "") {
+				gpuMap[gpu.UUID] = gpu
+			}
+		}
+	}
+
+	// Save all unique GPUs first to avoid FK violations
+	// This ensures GPUs exist before we try to save telemetry records
+	for _, gpu := range gpuMap {
+		if err := c.repository.SaveGPU(ctx, gpu); err != nil {
+			utils.Logger.Error("Failed to save GPU",
+				"error", err,
+				"instance_id", c.config.InstanceID,
+				"gpu_uuid", gpu.UUID)
+			// Continue processing - individual messages will handle GPU save as fallback
+		}
+	}
+
 	// Process messages and track which ones succeeded
 	processedMessages := make([]*domain.Message, 0, len(batch))
 	for _, msg := range batch {
@@ -176,16 +208,6 @@ func (c *Collector) processBatch(batch []*domain.Message) {
 			c.lastProcessedTime = time.Now()
 			c.mu.Unlock()
 			processedMessages = append(processedMessages, msg)
-		}
-	}
-
-	// Save all unique GPUs
-	for _, gpu := range gpuMap {
-		if err := c.repository.SaveGPU(ctx, gpu); err != nil {
-			utils.Logger.Error("Failed to save GPU",
-				"error", err,
-				"instance_id", c.config.InstanceID,
-				"gpu_uuid", gpu.UUID)
 		}
 	}
 
@@ -225,7 +247,7 @@ func (c *Collector) processMessage(ctx context.Context, msg *domain.Message, gpu
 		return fmt.Errorf("invalid telemetry record: %w", err)
 	}
 
-	// Extract GPU information from telemetry record
+	// Extract GPU information from telemetry record and ensure it is persisted
 	if record.GPUUUID != "" {
 		gpu := &domain.GPU{
 			UUID:      record.GPUUUID,
@@ -241,9 +263,13 @@ func (c *Collector) processMessage(ctx context.Context, msg *domain.Message, gpu
 		if existing, exists := gpuMap[gpu.UUID]; !exists || (gpu.Model != "" && existing.Model == "") {
 			gpuMap[gpu.UUID] = gpu
 		}
+		// Persist GPU before telemetry to avoid FK violations
+		if err := c.repository.SaveGPU(ctx, gpu); err != nil {
+			return fmt.Errorf("failed to save GPU: %w", err)
+		}
 	}
 
-	// Save telemetry record
+	// Save telemetry record after ensuring GPU exists
 	if err := c.repository.SaveTelemetry(ctx, record); err != nil {
 		return fmt.Errorf("failed to save telemetry: %w", err)
 	}

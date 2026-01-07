@@ -3,6 +3,7 @@ package mq
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -44,24 +45,37 @@ func (s *Server) Start(port string) error {
 		Addr:         ":" + port,
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		WriteTimeout: 0, // disable write timeout for SSE
 		IdleTimeout:  60 * time.Second,
 	}
 	s.mu.Unlock()
 
-	// Start server in goroutine
+	ready := make(chan struct{})
+	errCh := make(chan error, 1)
+
+	// Start server in goroutine with explicit listener
 	go func() {
 		utils.Logger.Info("Queue service starting", "port", port)
-		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			utils.Logger.Error("Server error", "error", err)
+		listener, err := net.Listen("tcp", ":"+port)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		close(ready)
+		if err := s.server.Serve(listener); err != nil && err != http.ErrServerClosed {
+			errCh <- err
 		}
 	}()
 
-	// Give server a moment to start
-	time.Sleep(100 * time.Millisecond)
-	utils.Logger.Info("Queue service started successfully", "port", port)
-
-	return nil
+	select {
+	case <-ready:
+		utils.Logger.Info("Queue service started successfully", "port", port)
+		return nil
+	case err := <-errCh:
+		return err
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("server start timeout")
+	}
 }
 
 // Stop gracefully stops the HTTP server

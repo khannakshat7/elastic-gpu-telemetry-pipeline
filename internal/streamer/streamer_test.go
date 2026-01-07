@@ -3,6 +3,7 @@ package streamer
 import (
 	"context"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -363,4 +364,216 @@ func TestStreamer_Start_NoRecordsLoaded(t *testing.T) {
 	err = str.Start()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no records loaded")
+}
+
+func TestStreamer_BackpressureOnQueueFull(t *testing.T) {
+	// CSV with a single record so loop keeps retrying publish
+	csvData := `timestamp,metric_name,gpu_id,device,uuid,modelName,Hostname,container,pod,namespace,value,labels_raw
+"2025-07-18T20:42:34Z","DCGM_FI_DEV_GPU_UTIL","0","nvidia0","GPU-123","NVIDIA H100 80GB HBM3","host-1","","","","100","labels"`
+
+	tmpFile := createTempCSV(t, csvData)
+	defer tmpFile.Close()
+
+	// Small queue to force queue-full quickly
+	queue := mq.NewInMemoryMessageQueue(1)
+	defer queue.Close()
+
+	cfg := &config.StreamerConfig{
+		CSVFilePath:    tmpFile.Name(),
+		StreamInterval: 1 * time.Millisecond,
+		InstanceID:     "bp-instance",
+	}
+
+	parser := telemetry.NewCSVParser()
+	str, err := NewStreamer(cfg, parser, queue)
+	require.NoError(t, err)
+	require.NoError(t, str.LoadCSV())
+
+	ctx := context.Background()
+	sub, err := queue.Subscribe(ctx, "consumer")
+	require.NoError(t, err)
+
+	// Start streamer
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// Stop after a short time
+		go func() {
+			time.Sleep(120 * time.Millisecond)
+			str.Stop()
+		}()
+		str.Start()
+	}()
+
+	// Let the streamer publish one message to fill the queue, then pause consumption
+	var first *domain.Message
+	select {
+	case first = <-sub:
+		// queue now has delivered 1; we will pause reading so subsequent Publishes see queue full
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("did not receive initial message")
+	}
+
+	// Now hold off consumption for a bit so Publish hits mq.ErrQueueFull and backpressure path executes
+	time.Sleep(80 * time.Millisecond)
+
+	// Resume consumption to drain messages and ensure streamer continued after backpressure
+	received := []*domain.Message{first}
+	collectUntil := time.After(120 * time.Millisecond)
+COLLECT:
+	for {
+		select {
+		case msg := <-sub:
+			if msg == nil {
+				break COLLECT
+			}
+			received = append(received, msg)
+		case <-collectUntil:
+			break COLLECT
+		}
+	}
+
+	// We should have at least the initial message plus some more after resuming,
+	// indicating the loop continued beyond queue-full backpressure.
+	assert.GreaterOrEqual(t, len(received), 2)
+
+	<-done
+}
+
+// ---- Fakes to simulate non-queue-full publish errors ----
+
+type fakeQueueErrorThenSuccess struct {
+	mu        sync.Mutex
+	attempts  int
+	successes int
+	failOnce  bool
+}
+
+func newFakeQueueErrorThenSuccess() *fakeQueueErrorThenSuccess {
+	return &fakeQueueErrorThenSuccess{failOnce: true}
+}
+
+func (f *fakeQueueErrorThenSuccess) Publish(ctx context.Context, msg *domain.Message) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.attempts++
+	if f.failOnce {
+		f.failOnce = false
+		// Return a non-queue-full error to hit the error logging + continue path
+		return context.DeadlineExceeded
+	}
+	f.successes++
+	return nil
+}
+
+func (f *fakeQueueErrorThenSuccess) Subscribe(ctx context.Context, consumerID string) (<-chan *domain.Message, error) {
+	ch := make(chan *domain.Message)
+	return ch, nil
+}
+func (f *fakeQueueErrorThenSuccess) Ack(ctx context.Context, messageID string, consumerID string) error { return nil }
+func (f *fakeQueueErrorThenSuccess) Close() error { return nil }
+func (f *fakeQueueErrorThenSuccess) IsClosed() bool { return false }
+
+// Queue that blocks until the provided context is cancelled, then returns ctx.Err()
+// to exercise the early return when s.ctx is cancelled after a publish error.
+
+type fakeQueueBlockUntilCancel struct {
+	mu       sync.Mutex
+	attempts int
+}
+
+func (f *fakeQueueBlockUntilCancel) Publish(ctx context.Context, msg *domain.Message) error {
+	f.mu.Lock()
+	f.attempts++
+	f.mu.Unlock()
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (f *fakeQueueBlockUntilCancel) Subscribe(ctx context.Context, consumerID string) (<-chan *domain.Message, error) {
+	ch := make(chan *domain.Message)
+	return ch, nil
+}
+func (f *fakeQueueBlockUntilCancel) Ack(ctx context.Context, messageID string, consumerID string) error { return nil }
+func (f *fakeQueueBlockUntilCancel) Close() error { return nil }
+func (f *fakeQueueBlockUntilCancel) IsClosed() bool { return false }
+
+func TestStreamer_PublishError_ContinueOnNonQueueError(t *testing.T) {
+	csvData := `timestamp,metric_name,gpu_id,device,uuid,modelName,Hostname,container,pod,namespace,value,labels_raw
+"2025-07-18T20:42:34Z","DCGM_FI_DEV_GPU_UTIL","0","nvidia0","GPU-123","NVIDIA H100 80GB HBM3","host-1","","","","100","labels"
+"2025-07-18T20:42:35Z","DCGM_FI_DEV_GPU_TEMP","1","nvidia1","GPU-456","NVIDIA H100 80GB HBM3","host-2","","","","75","labels"`
+
+	tmpFile := createTempCSV(t, csvData)
+	defer tmpFile.Close()
+
+	q := newFakeQueueErrorThenSuccess()
+	cfg := &config.StreamerConfig{
+		CSVFilePath:    tmpFile.Name(),
+		StreamInterval: 1 * time.Millisecond,
+		InstanceID:     "err-continue",
+	}
+	parser := telemetry.NewCSVParser()
+	str, err := NewStreamer(cfg, parser, q)
+	require.NoError(t, err)
+	require.NoError(t, str.LoadCSV())
+
+	// Start and stop after a short period
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			str.Stop()
+		}()
+		str.Start()
+	}()
+
+	<-done
+
+	q.mu.Lock()
+	attempts := q.attempts
+	successes := q.successes
+	q.mu.Unlock()
+
+	// We expect at least one failed publish and then a successful publish, proving continuation.
+	assert.GreaterOrEqual(t, attempts, 2)
+	assert.GreaterOrEqual(t, successes, 1)
+}
+
+func TestStreamer_PublishError_ContextCancelledExit(t *testing.T) {
+	csvData := `timestamp,metric_name,gpu_id,device,uuid,modelName,Hostname,container,pod,namespace,value,labels_raw
+"2025-07-18T20:42:34Z","DCGM_FI_DEV_GPU_UTIL","0","nvidia0","GPU-123","NVIDIA H100 80GB HBM3","host-1","","","","100","labels"`
+
+	tmpFile := createTempCSV(t, csvData)
+	defer tmpFile.Close()
+
+	q := &fakeQueueBlockUntilCancel{}
+	cfg := &config.StreamerConfig{
+		CSVFilePath:    tmpFile.Name(),
+		StreamInterval: 10 * time.Millisecond,
+		InstanceID:     "err-cancel",
+	}
+	parser := telemetry.NewCSVParser()
+	str, err := NewStreamer(cfg, parser, q)
+	require.NoError(t, err)
+	require.NoError(t, str.LoadCSV())
+
+	// Start streaming then cancel shortly after. Publish will unblock with ctx.Err(),
+	// and the stream loop should see s.ctx.Err()!=nil and return.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		go func() {
+			time.Sleep(30 * time.Millisecond)
+			str.Stop()
+		}()
+		str.Start()
+	}()
+
+	select {
+	case <-done:
+		// ok
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("timeout waiting for streamer to exit on context cancellation")
+	}
 }

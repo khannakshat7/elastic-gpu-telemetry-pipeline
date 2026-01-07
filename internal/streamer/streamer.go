@@ -2,6 +2,7 @@ package streamer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -150,6 +151,12 @@ func (s *Streamer) streamLoop() {
 
 			// Publish to queue
 			if err := s.queue.Publish(s.ctx, msg); err != nil {
+				if errors.Is(err, mq.ErrQueueFull) {
+					utils.Logger.Warn("Queue full, applying backpressure",
+						"instance_id", s.config.InstanceID)
+					time.Sleep(50 * time.Millisecond)
+					continue
+				}
 				if s.ctx.Err() != nil {
 					// Context cancelled, exit gracefully
 					return

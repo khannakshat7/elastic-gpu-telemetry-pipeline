@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/khannakshat7/elastic-gpu-telemetry-pipeline/pkg/domain"
@@ -58,8 +59,9 @@ func (r *HTTPRepository) ListGPUs(ctx context.Context) ([]*domain.GPU, error) {
 
 // GetGPU retrieves a GPU by its UUID
 func (r *HTTPRepository) GetGPU(ctx context.Context, uuid string) (*domain.GPU, error) {
-	url := fmt.Sprintf("%s/api/v1/storage/gpus/%s", r.baseURL, uuid)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	escapedUUID := url.PathEscape(uuid)
+	endpoint := fmt.Sprintf("%s/api/v1/storage/gpus/%s", r.baseURL, escapedUUID)
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -145,8 +147,9 @@ func (r *HTTPRepository) SaveTelemetry(ctx context.Context, record *domain.Telem
 
 // GetTelemetryByGPU retrieves telemetry records for a specific GPU
 func (r *HTTPRepository) GetTelemetryByGPU(ctx context.Context, gpuUUID string, startTime, endTime *time.Time) ([]*domain.TelemetryRecord, error) {
-	url := fmt.Sprintf("%s/api/v1/storage/gpus/%s/telemetry", r.baseURL, gpuUUID)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	escapedUUID := url.PathEscape(gpuUUID)
+	endpoint := fmt.Sprintf("%s/api/v1/storage/gpus/%s/telemetry", r.baseURL, escapedUUID)
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

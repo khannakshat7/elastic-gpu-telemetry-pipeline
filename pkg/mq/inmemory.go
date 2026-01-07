@@ -4,15 +4,29 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/khannakshat7/elastic-gpu-telemetry-pipeline/pkg/domain"
 )
+
+// ErrQueueFull signals the queue cannot accept more messages without backpressure handling.
+var ErrQueueFull = fmt.Errorf("message queue is full")
+
+// PendingMessage tracks delivery metadata for redelivery.
+type PendingMessage struct {
+	Message     *domain.Message
+	ConsumerID  string
+	DeliveredAt time.Time
+}
 
 // SubscriberInfo tracks information about a subscriber
 type SubscriberInfo struct {
 	Channel    chan *domain.Message
 	ConsumerID string
 	Context    context.Context
+	closed     atomic.Bool
+	closeOnce  sync.Once
 }
 
 // InMemoryMessageQueue is an in-memory implementation of MessageQueue using Go channels.
@@ -28,8 +42,8 @@ type InMemoryMessageQueue struct {
 	subscribers []*SubscriberInfo
 
 	// pendingMessages tracks messages that have been delivered but not yet ACKed
-	// Key: message ID, Value: consumer ID that received the message
-	pendingMessages map[string]string
+	// Key: message ID, Value: pending message metadata
+	pendingMessages map[string]*PendingMessage
 
 	// mu protects subscribers, pendingMessages, and closed flag
 	mu sync.RWMutex
@@ -45,6 +59,17 @@ type InMemoryMessageQueue struct {
 
 	// currentSubscriberIndex for round-robin distribution
 	currentSubscriberIndex int
+
+	// undeliveredQueue buffers messages when there are no subscribers
+	undeliveredQueue []*domain.Message
+	maxUndelivered   int
+
+	// redelivery configuration
+	ackTimeout  time.Duration
+	pendingTTL  time.Duration
+	redeliverWg sync.WaitGroup
+	redeliverCh chan struct{}
+	maxPending  int
 }
 
 // NewInMemoryMessageQueue creates a new in-memory message queue.
@@ -56,15 +81,25 @@ func NewInMemoryMessageQueue(bufferSize int) *InMemoryMessageQueue {
 	}
 
 	queue := &InMemoryMessageQueue{
-		messages:        make(chan *domain.Message, bufferSize),
-		subscribers:     make([]*SubscriberInfo, 0),
-		pendingMessages: make(map[string]string),
-		bufferSize:      bufferSize,
+		messages:         make(chan *domain.Message, bufferSize),
+		subscribers:      make([]*SubscriberInfo, 0),
+		pendingMessages:  make(map[string]*PendingMessage),
+		bufferSize:       bufferSize,
+		undeliveredQueue: make([]*domain.Message, 0),
+		maxUndelivered:   bufferSize, // default to bufferSize worth of backlog
+		ackTimeout:       30 * time.Second,
+		pendingTTL:       5 * time.Minute,
+		redeliverCh:      make(chan struct{}),
+		maxPending:       bufferSize * 10,
 	}
 
 	// Start the message distributor goroutine
 	queue.wg.Add(1)
 	go queue.distribute()
+
+	// Start redelivery loop
+	queue.redeliverWg.Add(1)
+	go queue.redeliveryLoop()
 
 	return queue
 }
@@ -94,6 +129,9 @@ func (q *InMemoryMessageQueue) Publish(ctx context.Context, msg *domain.Message)
 	select {
 	case q.messages <- msg:
 		return nil
+	default:
+		// Non-blocking publish to provide backpressure signal
+		return ErrQueueFull
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -141,13 +179,11 @@ func (q *InMemoryMessageQueue) Subscribe(ctx context.Context, consumerID string)
 				break
 			}
 		}
-		// Close channel only if not already closed
-		select {
-		case <-subChan:
-			// Channel already closed, do nothing
-		default:
+		// Close channel safely
+		subInfo.closed.Store(true)
+		subInfo.closeOnce.Do(func() {
 			close(subChan)
-		}
+		})
 		q.mu.Unlock()
 	}()
 
@@ -161,81 +197,169 @@ func (q *InMemoryMessageQueue) distribute() {
 	defer q.wg.Done()
 
 	for msg := range q.messages {
-		// Try to deliver message using round-robin
-		delivered := false
-		attempts := 0
-		q.mu.RLock()
-		numSubs := len(q.subscribers)
-		q.mu.RUnlock()
-		maxAttempts := numSubs
-
-		if numSubs == 0 {
-			// No subscribers yet, message will be lost
+		// If no subscribers, buffer message instead of dropping
+		q.mu.Lock()
+		if len(q.subscribers) == 0 {
+			if len(q.undeliveredQueue) < q.maxUndelivered {
+				q.undeliveredQueue = append(q.undeliveredQueue, msg)
+			}
+			// If backlog is full, message will be dropped
+			// This is expected behavior to prevent unbounded memory growth
+			q.mu.Unlock()
 			continue
 		}
-
-		for !delivered && attempts < maxAttempts {
-			q.mu.RLock()
-			if len(q.subscribers) == 0 {
-				q.mu.RUnlock()
-				// No subscribers, message will be lost (could buffer, but keeping simple)
-				break
+		// Before sending the new message, flush any buffered backlog
+		// We need to unlock before calling deliverMessage since it acquires its own locks
+		if len(q.undeliveredQueue) > 0 {
+			backlog := q.undeliveredQueue
+			q.undeliveredQueue = nil
+			q.mu.Unlock()
+			// Deliver buffered messages - they will be re-buffered if no subscribers
+			for _, buffered := range backlog {
+				q.deliverMessage(buffered)
 			}
-
-			// Get next subscriber using round-robin
-			if q.currentSubscriberIndex >= len(q.subscribers) {
-				q.currentSubscriberIndex = 0
-			}
-			subInfo := q.subscribers[q.currentSubscriberIndex]
-			q.currentSubscriberIndex = (q.currentSubscriberIndex + 1) % len(q.subscribers)
-			q.mu.RUnlock()
-
-			// Try to send message (blocking to ensure delivery for SSE)
-			// For SSE, we need to block until the message is sent
-			select {
-			case subInfo.Channel <- msg:
-				// Message delivered successfully
-				q.mu.Lock()
-				// Track as pending until ACKed
-				q.pendingMessages[msg.ID] = subInfo.ConsumerID
-				q.mu.Unlock()
-				delivered = true
-			case <-subInfo.Context.Done():
-				// Subscriber context cancelled, try next
-				attempts++
-			}
+		} else {
+			q.mu.Unlock()
 		}
 
-		if !delivered && len(q.subscribers) > 0 {
-			// All subscribers busy or channels full, try blocking send to first available
-			// This ensures message is not lost
-			q.mu.RLock()
-			subs := make([]*SubscriberInfo, len(q.subscribers))
-			copy(subs, q.subscribers)
-			q.mu.RUnlock()
-
-			for _, subInfo := range subs {
-				select {
-				case subInfo.Channel <- msg:
-					q.mu.Lock()
-					q.pendingMessages[msg.ID] = subInfo.ConsumerID
-					q.mu.Unlock()
-					delivered = true
-					break
-				case <-subInfo.Context.Done():
-					continue
-				}
-			}
-		}
+		// Try to deliver message using round-robin
+		q.deliverMessage(msg)
 	}
 
 	// Close all subscriber channels when message channel is closed
 	q.mu.Lock()
 	for _, subInfo := range q.subscribers {
-		close(subInfo.Channel)
+		subInfo.closeOnce.Do(func() {
+			close(subInfo.Channel)
+		})
 	}
 	q.subscribers = make([]*SubscriberInfo, 0)
 	q.mu.Unlock()
+}
+
+// deliverMessage attempts to deliver a single message with round-robin selection.
+func (q *InMemoryMessageQueue) deliverMessage(msg *domain.Message) {
+	delivered := false
+	attempts := 0
+	for !delivered {
+		q.mu.RLock()
+		numSubs := len(q.subscribers)
+		if numSubs == 0 {
+			q.mu.RUnlock()
+			q.mu.Lock()
+			if len(q.undeliveredQueue) < q.maxUndelivered {
+				q.undeliveredQueue = append(q.undeliveredQueue, msg)
+			}
+			q.mu.Unlock()
+			return
+		}
+
+		if q.currentSubscriberIndex >= numSubs {
+			q.currentSubscriberIndex = 0
+		}
+		subInfo := q.subscribers[q.currentSubscriberIndex]
+		q.currentSubscriberIndex = (q.currentSubscriberIndex + 1) % numSubs
+		q.mu.RUnlock()
+
+		// Attempt send with protection against races with close
+		if q.safeSend(subInfo, msg) {
+			q.mu.Lock()
+			if len(q.pendingMessages) < q.maxPending {
+				q.pendingMessages[msg.ID] = &PendingMessage{
+					Message:     msg,
+					ConsumerID:  subInfo.ConsumerID,
+					DeliveredAt: time.Now(),
+				}
+			} else {
+				// Pending messages map is full - message delivered but not tracked
+				// This is a warning condition but not fatal - message was delivered
+				// In production, consider using metrics here
+			}
+			q.mu.Unlock()
+			delivered = true
+			return
+		}
+
+		attempts++
+		if attempts >= numSubs {
+			time.Sleep(10 * time.Millisecond)
+			attempts = 0
+		}
+	}
+}
+
+// safeSend guards against channel close races when delivering.
+func (q *InMemoryMessageQueue) safeSend(subInfo *SubscriberInfo, msg *domain.Message) bool {
+	defer func() {
+		if r := recover(); r != nil {
+			// channel closed between check and send
+		}
+	}()
+
+	if subInfo.closed.Load() {
+		return false
+	}
+
+	select {
+	case subInfo.Channel <- msg:
+		return true
+	case <-subInfo.Context.Done():
+		return false
+	default:
+		return false
+	}
+}
+
+// redeliveryLoop periodically checks for ACK timeouts and requeues messages.
+func (q *InMemoryMessageQueue) redeliveryLoop() {
+	defer q.redeliverWg.Done()
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			// First collect candidates while holding the lock, then deliver outside
+			q.mu.Lock()
+			now := time.Now()
+			var redeliver []*domain.Message
+			for id, pending := range q.pendingMessages {
+				elapsed := now.Sub(pending.DeliveredAt)
+				switch {
+				case elapsed > q.pendingTTL:
+					// Message exceeded TTL, delete without redelivery
+					delete(q.pendingMessages, id)
+				case elapsed > q.ackTimeout:
+					// Message exceeded ACK timeout but not TTL, queue for redelivery
+					delete(q.pendingMessages, id)
+					redeliver = append(redeliver, pending.Message)
+				default:
+					// Still within ackTimeout; keep pending
+				}
+			}
+			hasSubs := len(q.subscribers) > 0
+			q.mu.Unlock()
+
+			// Deliver timed-out messages even if no new publishes arrive.
+			if len(redeliver) > 0 {
+				if hasSubs {
+					for _, msg := range redeliver {
+						q.deliverMessage(msg)
+					}
+				} else {
+					q.mu.Lock()
+					for _, msg := range redeliver {
+						if len(q.undeliveredQueue) < q.maxUndelivered {
+							q.undeliveredQueue = append(q.undeliveredQueue, msg)
+						}
+					}
+					q.mu.Unlock()
+				}
+			}
+		case <-q.redeliverCh:
+			return
+		}
+	}
 }
 
 // Ack acknowledges that a message has been successfully processed.
@@ -246,15 +370,15 @@ func (q *InMemoryMessageQueue) Ack(ctx context.Context, messageID string, consum
 	defer q.mu.Unlock()
 
 	// Verify the message is pending and was delivered to this consumer
-	storedConsumerID, exists := q.pendingMessages[messageID]
+	pending, exists := q.pendingMessages[messageID]
 	if !exists {
 		// Message not in pending - might have been already ACKed or never delivered through queue
 		// This is OK in test scenarios where processBatch is called directly
 		return nil // Return nil instead of error for idempotency
 	}
 
-	if storedConsumerID != consumerID {
-		return fmt.Errorf("message %s was delivered to consumer %s, not %s", messageID, storedConsumerID, consumerID)
+	if pending.ConsumerID != consumerID {
+		return fmt.Errorf("message %s was delivered to consumer %s, not %s", messageID, pending.ConsumerID, consumerID)
 	}
 
 	// Remove from pending
@@ -273,18 +397,22 @@ func (q *InMemoryMessageQueue) Close() error {
 
 	q.closed = true
 	close(q.messages)
+	close(q.redeliverCh)
 	q.mu.Unlock()
 
 	// Wait for distributor goroutine to finish
 	q.wg.Wait()
+	q.redeliverWg.Wait()
 
 	q.mu.Lock()
 	// Close all subscriber channels
 	for _, subInfo := range q.subscribers {
-		close(subInfo.Channel)
+		subInfo.closeOnce.Do(func() {
+			close(subInfo.Channel)
+		})
 	}
 	q.subscribers = make([]*SubscriberInfo, 0)
-	q.pendingMessages = make(map[string]string)
+	q.pendingMessages = make(map[string]*PendingMessage)
 	q.mu.Unlock()
 
 	return nil
