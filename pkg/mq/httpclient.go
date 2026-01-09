@@ -53,6 +53,19 @@ func (q *HTTPMessageQueue) SetConsumerID(consumerID string) {
 	q.consumerID = consumerID
 }
 
+// maxRetries is the number of times to retry transient failures
+const maxRetries = 3
+
+// retryableStatusCodes are HTTP status codes that indicate transient failures
+var retryableStatusCodes = map[int]bool{
+	http.StatusServiceUnavailable:  true,
+	http.StatusGatewayTimeout:      true,
+	http.StatusBadGateway:          true,
+	http.StatusTooManyRequests:     true,
+	http.StatusRequestTimeout:      true,
+	http.StatusInternalServerError: true,
+}
+
 // Publish publishes a message to the queue service via HTTP POST
 func (q *HTTPMessageQueue) Publish(ctx context.Context, msg *domain.Message) error {
 	q.mu.RLock()
@@ -70,28 +83,57 @@ func (q *HTTPMessageQueue) Publish(ctx context.Context, msg *domain.Message) err
 		return fmt.Errorf("failed to marshal message: %w", err)
 	}
 
-	// Create HTTP request
-	url := baseURL + "/api/v1/messages"
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// Create HTTP request (needs fresh request for each attempt)
+		url := baseURL + "/api/v1/messages"
+		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
 
-	// Send request
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
+		// Send request
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to send request: %w", err)
+			// Check if context is cancelled
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			// Wait before retry with exponential backoff
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(attempt+1) * 100 * time.Millisecond):
+				continue
+			}
+		}
 
-	// Check response status
-	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		// Success
+		if resp.StatusCode == http.StatusOK {
+			return nil
+		}
+
+		// Check if retryable
+		if retryableStatusCodes[resp.StatusCode] && attempt < maxRetries-1 {
+			lastErr = fmt.Errorf("queue service returned error: status %d, body: %s", resp.StatusCode, string(body))
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(attempt+1) * 100 * time.Millisecond):
+				continue
+			}
+		}
+
+		// Non-retryable error
 		return fmt.Errorf("queue service returned error: status %d, body: %s", resp.StatusCode, string(body))
 	}
 
-	return nil
+	return lastErr
 }
 
 // Subscribe creates a subscription channel that receives messages via Server-Sent Events (SSE).
@@ -117,16 +159,36 @@ func (q *HTTPMessageQueue) Subscribe(ctx context.Context, consumerID string) (<-
 		defer close(msgChan)
 
 		for {
-			// Check if context is cancelled
+			// Check if context is cancelled or client is closed
 			select {
 			case <-ctx.Done():
 				return
 			default:
 			}
 
+			// Also check if client is closed
+			q.mu.RLock()
+			closed := q.closed
+			q.mu.RUnlock()
+			if closed {
+				return
+			}
+
 			if err := q.connectAndStream(ctx, baseURL, consumerID, msgChan, httpClient); err != nil {
+				// Check again after error - don't reconnect if closed
+				q.mu.RLock()
+				closed := q.closed
+				q.mu.RUnlock()
+				if closed {
+					return
+				}
 				utils.Logger.Debug("SSE connection error, reconnecting", "error", err)
-				time.Sleep(1 * time.Second)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(1 * time.Second):
+					// Continue to reconnect
+				}
 			}
 		}
 	}()
@@ -161,29 +223,55 @@ func (q *HTTPMessageQueue) Ack(ctx context.Context, messageID string, consumerID
 		return fmt.Errorf("failed to marshal ACK request: %w", err)
 	}
 
-	// Create HTTP request
 	escapedID := url.PathEscape(messageID)
-	url := fmt.Sprintf("%s/api/v1/messages/%s/ack", baseURL, escapedID)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("failed to create ACK request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
 
-	// Send request
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to send ACK request: %w", err)
-	}
-	defer resp.Body.Close()
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// Create HTTP request
+		reqURL := fmt.Sprintf("%s/api/v1/messages/%s/ack", baseURL, escapedID)
+		req, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewBuffer(jsonData))
+		if err != nil {
+			return fmt.Errorf("failed to create ACK request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
 
-	// Check response status
-	if resp.StatusCode != http.StatusOK {
+		// Send request
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to send ACK request: %w", err)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(attempt+1) * 100 * time.Millisecond):
+				continue
+			}
+		}
+
 		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK {
+			return nil
+		}
+
+		// Check if retryable
+		if retryableStatusCodes[resp.StatusCode] && attempt < maxRetries-1 {
+			lastErr = fmt.Errorf("ACK request returned error: status %d, body: %s", resp.StatusCode, string(body))
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(attempt+1) * 100 * time.Millisecond):
+				continue
+			}
+		}
+
 		return fmt.Errorf("ACK request returned error: status %d, body: %s", resp.StatusCode, string(body))
 	}
 
-	return nil
+	return lastErr
 }
 
 // Close closes the HTTP queue client

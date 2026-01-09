@@ -143,3 +143,66 @@ func TestValidateGPUUUID_TrimsWhitespace(t *testing.T) {
 		})
 	}
 }
+
+// ---- Tests for injection protection ----
+
+func TestValidateGPUUUID_RejectsDangerousCharacters(t *testing.T) {
+	tests := []struct {
+		name    string
+		gpuUUID string
+	}{
+		{
+			name:    "single quote injection",
+			gpuUUID: "GPU-5fd4f087'; DROP TABLE gpus;--",
+		},
+		{
+			name:    "double quote injection",
+			gpuUUID: `GPU-5fd4f087" OR "1"="1`,
+		},
+		{
+			name:    "semicolon injection",
+			gpuUUID: "GPU-5fd4f087;DELETE FROM telemetry",
+		},
+		{
+			name:    "backslash injection",
+			gpuUUID: `GPU-5fd4f087\x00admin`,
+		},
+		{
+			name:    "less than injection",
+			gpuUUID: "GPU-5fd4f087<script>alert(1)</script>",
+		},
+		{
+			name:    "greater than injection",
+			gpuUUID: "GPU-5fd4f087>malicious",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateGPUUUID(tt.gpuUUID)
+			assert.Error(t, err, "should reject dangerous characters")
+			assert.ErrorIs(t, err, domain.ErrInvalidGPUUUID)
+		})
+	}
+}
+
+func TestValidateGPUUUID_ValidUUIDFormat(t *testing.T) {
+	// Test exact UUID format matches regex
+	validUUID := "GPU-5fd4f087-86f3-7a43-b711-4771313afc50"
+	err := validateGPUUUID(validUUID)
+	assert.NoError(t, err)
+}
+
+func TestValidateGPUUUID_UppercaseHex(t *testing.T) {
+	// Test with uppercase hex characters (should still be valid)
+	validUUID := "GPU-5FD4F087-86F3-7A43-B711-4771313AFC50"
+	err := validateGPUUUID(validUUID)
+	assert.NoError(t, err)
+}
+
+func TestValidateGPUUUID_MixedCaseHex(t *testing.T) {
+	// Test with mixed case hex characters
+	validUUID := "GPU-5fd4F087-86f3-7A43-b711-4771313Afc50"
+	err := validateGPUUUID(validUUID)
+	assert.NoError(t, err)
+}

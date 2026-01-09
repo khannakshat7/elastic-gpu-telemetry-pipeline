@@ -440,6 +440,101 @@ COLLECT:
 	<-done
 }
 
+// ---- Fakes to simulate queue full retry behavior ----
+
+// fakeQueueFullThenSuccess simulates ErrQueueFull for N attempts, then succeeds.
+// Used to verify that records are retried (not skipped) when queue is full.
+type fakeQueueFullThenSuccess struct {
+	mu            sync.Mutex
+	fullCount     int // Number of times to return ErrQueueFull
+	publishedMsgs []*domain.Message
+	fullResponses int // Track how many ErrQueueFull we returned
+}
+
+func newFakeQueueFullThenSuccess(fullCount int) *fakeQueueFullThenSuccess {
+	return &fakeQueueFullThenSuccess{fullCount: fullCount}
+}
+
+func (f *fakeQueueFullThenSuccess) Publish(ctx context.Context, msg *domain.Message) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fullResponses < f.fullCount {
+		f.fullResponses++
+		return mq.ErrQueueFull
+	}
+	f.publishedMsgs = append(f.publishedMsgs, msg)
+	return nil
+}
+
+func (f *fakeQueueFullThenSuccess) Subscribe(ctx context.Context, consumerID string) (<-chan *domain.Message, error) {
+	return make(chan *domain.Message), nil
+}
+func (f *fakeQueueFullThenSuccess) Ack(ctx context.Context, messageID string, consumerID string) error {
+	return nil
+}
+func (f *fakeQueueFullThenSuccess) Close() error   { return nil }
+func (f *fakeQueueFullThenSuccess) IsClosed() bool { return false }
+
+func (f *fakeQueueFullThenSuccess) GetPublishedCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.publishedMsgs)
+}
+
+func (f *fakeQueueFullThenSuccess) GetFullResponseCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.fullResponses
+}
+
+// TestStreamer_QueueFullRetry verifies that when queue returns ErrQueueFull,
+// the streamer retries the SAME record instead of skipping to the next one.
+func TestStreamer_QueueFullRetry(t *testing.T) {
+	csvData := `timestamp,metric_name,gpu_id,device,uuid,modelName,Hostname,container,pod,namespace,value,labels_raw
+"2025-07-18T20:42:34Z","METRIC_1","0","nvidia0","GPU-123","NVIDIA H100","host-1","","","","100","labels"
+"2025-07-18T20:42:35Z","METRIC_2","1","nvidia1","GPU-456","NVIDIA H100","host-2","","","","200","labels"`
+
+	tmpFile := createTempCSV(t, csvData)
+	defer tmpFile.Close()
+
+	// Queue will return ErrQueueFull 3 times, then succeed
+	fakeQueue := newFakeQueueFullThenSuccess(3)
+
+	cfg := &config.StreamerConfig{
+		CSVFilePath:    tmpFile.Name(),
+		StreamInterval: 1 * time.Millisecond, // Fast interval for test
+		InstanceID:     "test-retry",
+	}
+	parser := telemetry.NewCSVParser()
+	str, err := NewStreamer(cfg, parser, fakeQueue)
+	require.NoError(t, err)
+	require.NoError(t, str.LoadCSV())
+
+	// Start streaming in background
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		go func() {
+			// Wait for at least 2 messages to be published (one will have retries)
+			for fakeQueue.GetPublishedCount() < 2 {
+				time.Sleep(10 * time.Millisecond)
+			}
+			str.Stop()
+		}()
+		str.Start()
+	}()
+
+	select {
+	case <-done:
+		// Verify queue full was hit
+		assert.GreaterOrEqual(t, fakeQueue.GetFullResponseCount(), 1, "should have hit queue full at least once")
+		// Verify records were eventually published (not skipped)
+		assert.GreaterOrEqual(t, fakeQueue.GetPublishedCount(), 2, "both records should eventually be published")
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for streamer")
+	}
+}
+
 // ---- Fakes to simulate non-queue-full publish errors ----
 
 type fakeQueueErrorThenSuccess struct {
@@ -470,8 +565,10 @@ func (f *fakeQueueErrorThenSuccess) Subscribe(ctx context.Context, consumerID st
 	ch := make(chan *domain.Message)
 	return ch, nil
 }
-func (f *fakeQueueErrorThenSuccess) Ack(ctx context.Context, messageID string, consumerID string) error { return nil }
-func (f *fakeQueueErrorThenSuccess) Close() error { return nil }
+func (f *fakeQueueErrorThenSuccess) Ack(ctx context.Context, messageID string, consumerID string) error {
+	return nil
+}
+func (f *fakeQueueErrorThenSuccess) Close() error   { return nil }
 func (f *fakeQueueErrorThenSuccess) IsClosed() bool { return false }
 
 // Queue that blocks until the provided context is cancelled, then returns ctx.Err()
@@ -494,8 +591,10 @@ func (f *fakeQueueBlockUntilCancel) Subscribe(ctx context.Context, consumerID st
 	ch := make(chan *domain.Message)
 	return ch, nil
 }
-func (f *fakeQueueBlockUntilCancel) Ack(ctx context.Context, messageID string, consumerID string) error { return nil }
-func (f *fakeQueueBlockUntilCancel) Close() error { return nil }
+func (f *fakeQueueBlockUntilCancel) Ack(ctx context.Context, messageID string, consumerID string) error {
+	return nil
+}
+func (f *fakeQueueBlockUntilCancel) Close() error   { return nil }
 func (f *fakeQueueBlockUntilCancel) IsClosed() bool { return false }
 
 func TestStreamer_PublishError_ContinueOnNonQueueError(t *testing.T) {

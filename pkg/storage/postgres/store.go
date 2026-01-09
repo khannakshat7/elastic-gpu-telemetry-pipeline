@@ -25,8 +25,17 @@ func NewStore(connectionString string) (*Store, error) {
 		return nil, fmt.Errorf("failed to open database connection: %w", err)
 	}
 
+	// Configure connection pool for production use
+	db.SetMaxOpenConns(25)                 // Maximum number of open connections
+	db.SetMaxIdleConns(10)                 // Maximum number of idle connections
+	db.SetConnMaxLifetime(5 * time.Minute) // Maximum connection lifetime
+	db.SetConnMaxIdleTime(1 * time.Minute) // Maximum idle time before closing
+
 	// Test the connection
-	if err := db.Ping(); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
@@ -34,6 +43,7 @@ func NewStore(connectionString string) (*Store, error) {
 
 	// Initialize database schema
 	if err := store.initSchema(context.Background()); err != nil {
+		db.Close()
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 

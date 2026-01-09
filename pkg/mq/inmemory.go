@@ -110,6 +110,12 @@ func (q *InMemoryMessageQueue) Publish(ctx context.Context, msg *domain.Message)
 	if msg == nil {
 		return fmt.Errorf("cannot publish nil message")
 	}
+	if msg.ID == "" {
+		return fmt.Errorf("message ID is required")
+	}
+	if msg.Payload == nil {
+		return fmt.Errorf("message payload cannot be nil")
+	}
 
 	q.mu.RLock()
 	if q.closed {
@@ -238,10 +244,13 @@ func (q *InMemoryMessageQueue) distribute() {
 }
 
 // deliverMessage attempts to deliver a single message with round-robin selection.
-func (q *InMemoryMessageQueue) deliverMessage(msg *domain.Message) {
-	delivered := false
+// Returns true if delivered, false if message was buffered or dropped.
+func (q *InMemoryMessageQueue) deliverMessage(msg *domain.Message) bool {
+	const maxRetries = 100 // Prevent infinite loops - max retries before buffering
+
 	attempts := 0
-	for !delivered {
+	totalAttempts := 0
+	for {
 		q.mu.RLock()
 		numSubs := len(q.subscribers)
 		if numSubs == 0 {
@@ -251,7 +260,7 @@ func (q *InMemoryMessageQueue) deliverMessage(msg *domain.Message) {
 				q.undeliveredQueue = append(q.undeliveredQueue, msg)
 			}
 			q.mu.Unlock()
-			return
+			return false
 		}
 
 		if q.currentSubscriberIndex >= numSubs {
@@ -270,20 +279,28 @@ func (q *InMemoryMessageQueue) deliverMessage(msg *domain.Message) {
 					ConsumerID:  subInfo.ConsumerID,
 					DeliveredAt: time.Now(),
 				}
-			} else {
-				// Pending messages map is full - message delivered but not tracked
-				// This is a warning condition but not fatal - message was delivered
-				// In production, consider using metrics here
 			}
 			q.mu.Unlock()
-			delivered = true
-			return
+			return true
 		}
 
 		attempts++
+		totalAttempts++
+
+		// If we've tried all subscribers once, wait briefly
 		if attempts >= numSubs {
 			time.Sleep(10 * time.Millisecond)
 			attempts = 0
+		}
+
+		// Prevent infinite loop - buffer message if we can't deliver after max retries
+		if totalAttempts >= maxRetries {
+			q.mu.Lock()
+			if len(q.undeliveredQueue) < q.maxUndelivered {
+				q.undeliveredQueue = append(q.undeliveredQueue, msg)
+			}
+			q.mu.Unlock()
+			return false
 		}
 	}
 }

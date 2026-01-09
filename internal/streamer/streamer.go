@@ -149,25 +149,40 @@ func (s *Streamer) streamLoop() {
 			// Create message
 			msg := domain.NewMessage(&recordCopy, s.config.InstanceID)
 
-			// Publish to queue
-			if err := s.queue.Publish(s.ctx, msg); err != nil {
+			// Publish to queue with retry on queue full
+			published := false
+			for !published {
+				err := s.queue.Publish(s.ctx, msg)
+				if err == nil {
+					published = true
+					break
+				}
+
 				if errors.Is(err, mq.ErrQueueFull) {
 					utils.Logger.Warn("Queue full, applying backpressure",
 						"instance_id", s.config.InstanceID)
-					time.Sleep(50 * time.Millisecond)
-					continue
+					// Wait and retry the SAME record
+					select {
+					case <-s.ctx.Done():
+						return
+					case <-time.After(50 * time.Millisecond):
+						// Retry publishing this record
+						continue
+					}
 				}
+
 				if s.ctx.Err() != nil {
 					// Context cancelled, exit gracefully
 					return
 				}
+
 				utils.Logger.Error("Failed to publish message",
 					"error", err,
 					"instance_id", s.config.InstanceID,
 					"gpu_uuid", record.GPUUUID,
 					"metric", record.MetricName)
-				// Continue to next record even if publish fails
-				continue
+				// For non-retryable errors, skip to next record
+				break
 			}
 
 			// Wait for interval before next record

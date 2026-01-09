@@ -365,3 +365,165 @@ func TestHTTPMessageQueue_Ack_DefaultConsumerID(t *testing.T) {
 	err := queue.Ack(ctx, "message-123", "")
 	assert.NoError(t, err)
 }
+
+// ---- Tests for new retry functionality ----
+
+func TestHTTPMessageQueue_Publish_RetryOnTransientError(t *testing.T) {
+	attempts := 0
+	// Create a test server that fails twice then succeeds
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts <= 2 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"error": "temporarily unavailable"}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "published"})
+	}))
+	defer server.Close()
+
+	queue := NewHTTPMessageQueue(server.URL)
+	defer queue.Close()
+
+	record := &domain.TelemetryRecord{
+		GPUUUID:       "GPU-123",
+		MetricName:    "DCGM_FI_DEV_GPU_UTIL",
+		Value:         "100",
+		IngestionTime: time.Now(),
+	}
+	msg := domain.NewMessage(record, "producer-1")
+
+	ctx := context.Background()
+	err := queue.Publish(ctx, msg)
+
+	assert.NoError(t, err, "should succeed after retries")
+	assert.Equal(t, 3, attempts, "should have made 3 attempts (2 failures + 1 success)")
+}
+
+func TestHTTPMessageQueue_Publish_FailAfterMaxRetries(t *testing.T) {
+	attempts := 0
+	// Create a test server that always fails with retryable error
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"error": "always unavailable"}`))
+	}))
+	defer server.Close()
+
+	queue := NewHTTPMessageQueue(server.URL)
+	defer queue.Close()
+
+	record := &domain.TelemetryRecord{
+		GPUUUID:       "GPU-123",
+		MetricName:    "DCGM_FI_DEV_GPU_UTIL",
+		Value:         "100",
+		IngestionTime: time.Now(),
+	}
+	msg := domain.NewMessage(record, "producer-1")
+
+	ctx := context.Background()
+	err := queue.Publish(ctx, msg)
+
+	assert.Error(t, err, "should fail after max retries")
+	assert.Equal(t, 3, attempts, "should have made maxRetries attempts")
+	assert.Contains(t, err.Error(), "503")
+}
+
+func TestHTTPMessageQueue_Publish_NoRetryOnNonRetryableError(t *testing.T) {
+	attempts := 0
+	// Create a test server that returns non-retryable error
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error": "bad request"}`))
+	}))
+	defer server.Close()
+
+	queue := NewHTTPMessageQueue(server.URL)
+	defer queue.Close()
+
+	record := &domain.TelemetryRecord{
+		GPUUUID:       "GPU-123",
+		MetricName:    "DCGM_FI_DEV_GPU_UTIL",
+		Value:         "100",
+		IngestionTime: time.Now(),
+	}
+	msg := domain.NewMessage(record, "producer-1")
+
+	ctx := context.Background()
+	err := queue.Publish(ctx, msg)
+
+	assert.Error(t, err)
+	assert.Equal(t, 1, attempts, "should not retry non-retryable errors")
+}
+
+func TestHTTPMessageQueue_Ack_EmptyMessageID(t *testing.T) {
+	queue := NewHTTPMessageQueue("http://localhost:8080")
+	defer queue.Close()
+
+	ctx := context.Background()
+	err := queue.Ack(ctx, "", "test-consumer")
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "messageID is required")
+}
+
+func TestHTTPMessageQueue_Ack_RetryOnTransientError(t *testing.T) {
+	attempts := 0
+	// Create a test server that fails once then succeeds
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.WriteHeader(http.StatusGatewayTimeout)
+			w.Write([]byte(`{"error": "gateway timeout"}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "acknowledged"})
+	}))
+	defer server.Close()
+
+	queue := NewHTTPMessageQueue(server.URL)
+	defer queue.Close()
+
+	ctx := context.Background()
+	err := queue.Ack(ctx, "message-123", "test-consumer")
+
+	assert.NoError(t, err, "should succeed after retry")
+	assert.Equal(t, 2, attempts, "should have made 2 attempts")
+}
+
+func TestHTTPMessageQueue_Subscribe_StopsOnClose(t *testing.T) {
+	// Create a simple test server for SSE
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		// Don't send any data, just keep connection open briefly
+		time.Sleep(100 * time.Millisecond)
+	}))
+	defer server.Close()
+
+	queue := NewHTTPMessageQueue(server.URL)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	msgChan, err := queue.Subscribe(ctx, "test-consumer")
+	require.NoError(t, err)
+
+	// Close the queue
+	queue.Close()
+	cancel()
+
+	// Give goroutine time to exit
+	time.Sleep(200 * time.Millisecond)
+
+	// Channel should be closed
+	select {
+	case _, ok := <-msgChan:
+		assert.False(t, ok, "channel should be closed")
+	default:
+		// Channel may already be drained
+	}
+
+	assert.True(t, queue.IsClosed())
+}

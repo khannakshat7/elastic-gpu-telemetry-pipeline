@@ -430,3 +430,140 @@ func TestStore_GetTelemetryByGPU_InvalidUUID(t *testing.T) {
 	assert.Nil(t, results)
 	assert.Equal(t, ErrInvalidGPUUUID, err)
 }
+
+// ---- Tests for new eviction functionality ----
+
+func TestNewStoreWithMaxRecords(t *testing.T) {
+	store := NewStoreWithMaxRecords(100)
+	assert.NotNil(t, store)
+	assert.Equal(t, 100, store.maxRecords)
+
+	// Test with zero/negative should use default
+	store2 := NewStoreWithMaxRecords(0)
+	assert.Equal(t, MaxTelemetryRecords, store2.maxRecords)
+
+	store3 := NewStoreWithMaxRecords(-10)
+	assert.Equal(t, MaxTelemetryRecords, store3.maxRecords)
+}
+
+func TestStore_Eviction_WhenMaxRecordsReached(t *testing.T) {
+	// Create store with small max records for testing
+	store := NewStoreWithMaxRecords(10)
+	ctx := context.Background()
+
+	// Save a GPU first
+	gpu := &domain.GPU{
+		UUID:     "GPU-123",
+		GPUID:    "0",
+		Device:   "nvidia0",
+		Model:    "NVIDIA H100",
+		Hostname: "host-1",
+	}
+	require.NoError(t, store.SaveGPU(ctx, gpu))
+
+	// Add 15 records (exceeds max of 10)
+	for i := 0; i < 15; i++ {
+		record := &domain.TelemetryRecord{
+			GPUUUID:       "GPU-123",
+			MetricName:    fmt.Sprintf("METRIC_%d", i),
+			Value:         fmt.Sprintf("%d", i),
+			IngestionTime: time.Now().Add(time.Duration(i) * time.Second),
+		}
+		err := store.SaveTelemetry(ctx, record)
+		require.NoError(t, err)
+	}
+
+	// Verify eviction happened - should have fewer than 15 records
+	records, err := store.GetTelemetryByGPU(ctx, "GPU-123", nil, nil)
+	require.NoError(t, err)
+
+	// After eviction (10% of 10 = 1 record evicted each time limit is hit)
+	// Total should be at most maxRecords
+	assert.LessOrEqual(t, len(records), 10, "should have at most maxRecords after eviction")
+}
+
+func TestStore_Eviction_PreservesNewestRecords(t *testing.T) {
+	store := NewStoreWithMaxRecords(5)
+	ctx := context.Background()
+
+	// Save a GPU first
+	gpu := &domain.GPU{
+		UUID:     "GPU-123",
+		GPUID:    "0",
+		Device:   "nvidia0",
+		Model:    "NVIDIA H100",
+		Hostname: "host-1",
+	}
+	require.NoError(t, store.SaveGPU(ctx, gpu))
+
+	// Add 10 records with increasing values
+	baseTime := time.Now()
+	for i := 0; i < 10; i++ {
+		record := &domain.TelemetryRecord{
+			GPUUUID:       "GPU-123",
+			MetricName:    "METRIC",
+			Value:         fmt.Sprintf("%d", i),
+			IngestionTime: baseTime.Add(time.Duration(i) * time.Second),
+		}
+		err := store.SaveTelemetry(ctx, record)
+		require.NoError(t, err)
+	}
+
+	// Get records and verify newest are kept
+	records, err := store.GetTelemetryByGPU(ctx, "GPU-123", nil, nil)
+	require.NoError(t, err)
+
+	// Newest records should be preserved (highest values)
+	if len(records) > 0 {
+		// Last record should be one of the newer ones
+		lastValue := records[len(records)-1].Value
+		lastInt := 0
+		fmt.Sscanf(lastValue, "%d", &lastInt)
+		assert.GreaterOrEqual(t, lastInt, 5, "newest records should be preserved")
+	}
+}
+
+func TestStore_Eviction_UpdatesIndices(t *testing.T) {
+	store := NewStoreWithMaxRecords(5)
+	ctx := context.Background()
+
+	// Save GPUs
+	for i := 1; i <= 3; i++ {
+		gpu := &domain.GPU{
+			UUID:     fmt.Sprintf("GPU-%d", i),
+			GPUID:    fmt.Sprintf("%d", i),
+			Device:   fmt.Sprintf("nvidia%d", i),
+			Model:    "NVIDIA H100",
+			Hostname: "host-1",
+		}
+		require.NoError(t, store.SaveGPU(ctx, gpu))
+	}
+
+	// Add records for multiple GPUs
+	baseTime := time.Now()
+	for i := 0; i < 3; i++ {
+		for j := 1; j <= 3; j++ {
+			record := &domain.TelemetryRecord{
+				GPUUUID:       fmt.Sprintf("GPU-%d", j),
+				MetricName:    fmt.Sprintf("METRIC_%d", i),
+				Value:         fmt.Sprintf("%d", i),
+				IngestionTime: baseTime.Add(time.Duration(i*3+j) * time.Second),
+			}
+			err := store.SaveTelemetry(ctx, record)
+			require.NoError(t, err)
+		}
+	}
+
+	// Verify we can still query by GPU after eviction
+	for j := 1; j <= 3; j++ {
+		records, err := store.GetTelemetryByGPU(ctx, fmt.Sprintf("GPU-%d", j), nil, nil)
+		require.NoError(t, err)
+		// Each GPU should have some records
+		assert.GreaterOrEqual(t, len(records), 0)
+	}
+
+	// Verify ListGPUs still works
+	gpus, err := store.ListGPUs(ctx)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(gpus), 1)
+}

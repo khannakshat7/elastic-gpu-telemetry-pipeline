@@ -247,7 +247,9 @@ func (c *Collector) processMessage(ctx context.Context, msg *domain.Message, gpu
 		return fmt.Errorf("invalid telemetry record: %w", err)
 	}
 
-	// Extract GPU information from telemetry record and ensure it is persisted
+	// Extract GPU information from telemetry record
+	// Note: GPU is already saved in processBatch before calling processMessage
+	// Only update gpuMap here for tracking purposes (no duplicate saves)
 	if record.GPUUUID != "" {
 		gpu := &domain.GPU{
 			UUID:      record.GPUUUID,
@@ -263,10 +265,7 @@ func (c *Collector) processMessage(ctx context.Context, msg *domain.Message, gpu
 		if existing, exists := gpuMap[gpu.UUID]; !exists || (gpu.Model != "" && existing.Model == "") {
 			gpuMap[gpu.UUID] = gpu
 		}
-		// Persist GPU before telemetry to avoid FK violations
-		if err := c.repository.SaveGPU(ctx, gpu); err != nil {
-			return fmt.Errorf("failed to save GPU: %w", err)
-		}
+		// GPU already saved in processBatch - don't save again here
 	}
 
 	// Save telemetry record after ensuring GPU exists

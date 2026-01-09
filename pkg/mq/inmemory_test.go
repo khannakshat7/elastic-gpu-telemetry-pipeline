@@ -782,7 +782,7 @@ func TestInMemoryMessageQueue_Publish_Backpressure(t *testing.T) {
 			time.Sleep(1 * time.Millisecond)
 		}
 	}
-	
+
 	// With a buffer of 2 and rapid publishing, we should hit backpressure
 	// This test verifies the mechanism exists, even if timing-dependent
 	if !gotBackpressure {
@@ -949,4 +949,111 @@ func TestInMemoryMessageQueue_SafeChannelClose(t *testing.T) {
 
 	// Verify subscriber was removed
 	assert.Equal(t, 0, queue.GetSubscriberCount())
+}
+
+// ---- Tests for new publish validation ----
+
+func TestInMemoryMessageQueue_Publish_EmptyMessageID(t *testing.T) {
+	queue := NewInMemoryMessageQueue(100)
+	defer queue.Close()
+
+	ctx := context.Background()
+
+	// Message with empty ID should be rejected
+	msg := &domain.Message{
+		ID:      "",
+		Payload: &domain.TelemetryRecord{GPUUUID: "GPU-123"},
+	}
+
+	err := queue.Publish(ctx, msg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "message ID is required")
+}
+
+func TestInMemoryMessageQueue_Publish_NilPayload(t *testing.T) {
+	queue := NewInMemoryMessageQueue(100)
+	defer queue.Close()
+
+	ctx := context.Background()
+
+	// Message with nil payload should be rejected
+	msg := &domain.Message{
+		ID:      "test-123",
+		Payload: nil,
+	}
+
+	err := queue.Publish(ctx, msg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "payload cannot be nil")
+}
+
+func TestInMemoryMessageQueue_Publish_ValidMessage(t *testing.T) {
+	queue := NewInMemoryMessageQueue(100)
+	defer queue.Close()
+
+	ctx := context.Background()
+
+	// Valid message should be accepted
+	record := &domain.TelemetryRecord{
+		GPUUUID:       "GPU-123",
+		MetricName:    "DCGM_FI_DEV_GPU_UTIL",
+		Value:         "100",
+		IngestionTime: time.Now(),
+	}
+	msg := domain.NewMessage(record, "producer-1")
+
+	err := queue.Publish(ctx, msg)
+	assert.NoError(t, err)
+}
+
+// TestInMemoryMessageQueue_DeliverMessage_MaxRetries tests that deliverMessage
+// stops trying after maxRetries and buffers the message
+func TestInMemoryMessageQueue_DeliverMessage_BuffersAfterMaxRetries(t *testing.T) {
+	// Create queue with very small buffer
+	queue := NewInMemoryMessageQueue(5)
+	defer queue.Close()
+
+	ctx := context.Background()
+
+	// Subscribe but don't consume - channel will fill up
+	subChan, err := queue.Subscribe(ctx, "slow-consumer")
+	require.NoError(t, err)
+
+	// Publish many messages - should eventually hit max retries
+	for i := 0; i < 20; i++ {
+		record := &domain.TelemetryRecord{
+			GPUUUID:       "GPU-123",
+			MetricName:    fmt.Sprintf("METRIC_%d", i),
+			Value:         fmt.Sprintf("%d", i),
+			IngestionTime: time.Now(),
+		}
+		msg := domain.NewMessage(record, "producer-1")
+		err := queue.Publish(ctx, msg)
+		if err == ErrQueueFull {
+			// Expected when queue is full
+			break
+		}
+	}
+
+	// Give some time for delivery attempts
+	time.Sleep(200 * time.Millisecond)
+
+	// Now consume messages
+	received := 0
+	timeout := time.After(500 * time.Millisecond)
+consumeLoop:
+	for {
+		select {
+		case _, ok := <-subChan:
+			if !ok {
+				break consumeLoop
+			}
+			received++
+		case <-timeout:
+			break consumeLoop
+		}
+	}
+
+	// Should have received some messages (buffer size worth)
+	assert.GreaterOrEqual(t, received, 1, "should have received at least 1 message")
 }

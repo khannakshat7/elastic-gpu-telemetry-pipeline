@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -241,9 +239,4 @@ func (s *Server) getStats(c *gin.Context) {
 		"timestamp":        time.Now(),
 	}
 	c.JSON(http.StatusOK, stats)
-}
-
-// isTestEnvironment checks if we're running in a test environment
-func isTestEnvironment() bool {
-	return len(os.Args) > 0 && (strings.HasSuffix(os.Args[0], ".test") || strings.Contains(os.Args[0], "/_test/"))
 }
